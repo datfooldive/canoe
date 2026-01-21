@@ -1,0 +1,45 @@
+[package]
+name = "rwm"
+version = "0.1.0"
+edition = "2021"
+description = "A River window manager implementation in Rust"
+license = "MIT"
+
+[dependencies]
+# Wayland client bindings
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+wayland-backend = "0.3"
+wayland-scanner = "0.31"
+bitflags = "2"
+
+# XKB for keyboard handling
+xkbcommon = "0.8"
+
+# Signal handling and system
+nix = { version = "0.29", features = ["signal", "process", "poll", "fs"] }
+
+# Regex for window rules
+regex = "1"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Error handling
+thiserror = "2"
+
+[build-dependencies]
+wayland-scanner = "0.31"
+
+[dev-dependencies]
+# For tests
+tempfile = "3"
+
+[[bin]]
+name = "rwm"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true

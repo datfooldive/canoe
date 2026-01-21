@@ -1,0 +1,837 @@
+//! RWM - River Window Manager in Rust
+//!
+//! A tiling window manager for the River Wayland compositor.
+
+mod binding;
+mod config;
+mod layout;
+mod protocol;
+mod rule;
+mod rwm;
+
+use protocol::*;
+use rwm::Context;
+
+use std::cell::RefCell;
+use std::os::fd::{AsFd, AsRawFd};
+use std::rc::Rc;
+
+use nix::poll::{poll, PollFd, PollFlags};
+use nix::sys::signal::{SigSet, Signal};
+use nix::sys::signalfd::{SfdFlags, SignalFd};
+
+use wayland_client::protocol::wl_registry;
+use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle};
+
+/// Application state for Wayland dispatch
+struct AppState {
+    context: Rc<RefCell<Context>>,
+    globals: Globals,
+}
+
+/// Collected Wayland globals
+#[derive(Default)]
+struct Globals {
+    rwm: Option<RiverWindowManagerV1>,
+    rwm_xkb_bindings: Option<RiverXkbBindingsV1>,
+    rwm_layer_shell: Option<RiverLayerShellV1>,
+    rwm_input_manager: Option<RiverInputManagerV1>,
+    rwm_libinput_config: Option<RiverLibinputConfigV1>,
+}
+
+impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
+    fn event(
+        state: &mut Self,
+        registry: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        _data: &(),
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
+            match interface.as_str() {
+                "river_window_manager_v1" => {
+                    let rwm: RiverWindowManagerV1 =
+                        registry.bind(name, version.min(2), qh, ());
+                    state.globals.rwm = Some(rwm.clone());
+                    state.context.borrow_mut().rwm = Some(rwm);
+                }
+                "river_xkb_bindings_v1" => {
+                    let xkb: RiverXkbBindingsV1 = registry.bind(name, version.min(1), qh, ());
+                    state.globals.rwm_xkb_bindings = Some(xkb.clone());
+                    state.context.borrow_mut().rwm_xkb_bindings = Some(xkb);
+                }
+                "river_layer_shell_v1" => {
+                    let ls: RiverLayerShellV1 = registry.bind(name, version.min(1), qh, ());
+                    state.globals.rwm_layer_shell = Some(ls.clone());
+                    state.context.borrow_mut().rwm_layer_shell = Some(ls);
+                }
+                "river_input_manager_v1" => {
+                    let im: RiverInputManagerV1 = registry.bind(name, version.min(1), qh, ());
+                    state.globals.rwm_input_manager = Some(im.clone());
+                    state.context.borrow_mut().rwm_input_manager = Some(im);
+                }
+                "river_libinput_config_v1" => {
+                    let lc: RiverLibinputConfigV1 = registry.bind(name, version.min(1), qh, ());
+                    state.globals.rwm_libinput_config = Some(lc.clone());
+                    state.context.borrow_mut().rwm_libinput_config = Some(lc);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+// Implement dispatch for River Window Manager protocol
+impl Dispatch<RiverWindowManagerV1, ()> for AppState {
+    fn event(
+        state: &mut Self,
+        _proxy: &RiverWindowManagerV1,
+        event: river_window_management_v1::client::river_window_manager_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        use river_window_management_v1::client::river_window_manager_v1::Event;
+
+        match event {
+            Event::Unavailable => {
+                log::error!("Window management unavailable - another WM may be running");
+                state.context.borrow_mut().running = false;
+            }
+            Event::Finished => {
+                log::info!("Window manager finished");
+                state.context.borrow_mut().running = false;
+            }
+            Event::ManageStart => {
+                state.context.borrow_mut().handle_manage_start();
+                state.context.borrow().finish_manage();
+            }
+            Event::RenderStart => {
+                state.context.borrow_mut().handle_render_start();
+                state.context.borrow().finish_render();
+            }
+            Event::Window { id } => {
+                let window = state.context.borrow_mut().create_window(id.clone());
+
+                // Get the node for this window
+                let node: RiverNodeV1 = id.get_node(qh, window.borrow().id);
+                window.borrow_mut().rwm_node = Some(node);
+
+                // Queue init event
+                window.borrow_mut().queue_event(rwm::WindowEvent::Init);
+            }
+            Event::Output { id } => {
+                let output = state.context.borrow_mut().create_output(id.clone());
+
+                // Get layer shell output if available
+                if let Some(ref layer_shell) = state.globals.rwm_layer_shell {
+                    let ls_output: RiverLayerShellOutputV1 =
+                        layer_shell.get_output(&id, qh, output.borrow().id);
+                    output.borrow_mut().layer_shell_output = Some(ls_output);
+                }
+            }
+            Event::Seat { id } => {
+                let seat = state.context.borrow_mut().create_seat(id.clone());
+                let seat_id = seat.borrow().id;
+
+                // Get layer shell seat if available
+                if let Some(ref layer_shell) = state.globals.rwm_layer_shell {
+                    let ls_seat: RiverLayerShellSeatV1 =
+                        layer_shell.get_seat(&id, qh, seat_id);
+                    seat.borrow_mut().layer_shell_seat = Some(ls_seat);
+                }
+
+                // Register XKB bindings with the compositor
+                if let Some(ref xkb_bindings_global) = state.globals.rwm_xkb_bindings {
+                    let mut seat_ref = seat.borrow_mut();
+                    log::info!("Registering {} XKB bindings for seat {}", seat_ref.xkb_bindings.len(), seat_id);
+
+                    for (idx, (binding, rwm_binding_slot)) in seat_ref.xkb_bindings.iter_mut().enumerate() {
+                        // Protocol: get_xkb_binding(seat, keysym, modifiers) -> new_id
+                        // wayland-client adds qh and user_data at the end
+                        use river_window_management_v1::client::river_seat_v1::Modifiers;
+                        let mods = Modifiers::from_bits_truncate(binding.modifiers);
+                        let rwm_binding: RiverXkbBindingV1 = xkb_bindings_global.get_xkb_binding(
+                            &id,
+                            binding.keysym,
+                            mods,
+                            qh,
+                            (seat_id, idx),
+                        );
+
+                        // Enable binding if it's for the current mode
+                        if binding.enabled {
+                            rwm_binding.enable();
+                            log::debug!("Enabled binding {} (keysym: {:#x}, mods: {:#x})", idx, binding.keysym, binding.modifiers);
+                        }
+
+                        *rwm_binding_slot = Some(rwm_binding);
+                    }
+                }
+
+                // Register pointer bindings with the compositor
+                {
+                    let mut seat_ref = seat.borrow_mut();
+                    let rwm_seat = seat_ref.rwm_seat.clone();
+                    if let Some(rwm_seat) = rwm_seat {
+                        log::info!("Registering {} pointer bindings for seat {}", seat_ref.pointer_bindings.len(), seat_id);
+
+                        for (idx, (binding, rwm_binding_slot)) in seat_ref.pointer_bindings.iter_mut().enumerate() {
+                            // Protocol: get_pointer_binding(button, modifiers) -> new_id on river_seat_v1
+                            use river_window_management_v1::client::river_seat_v1::Modifiers;
+                            let mods = Modifiers::from_bits_truncate(binding.modifiers);
+                            let rwm_binding: RiverPointerBindingV1 = rwm_seat.get_pointer_binding(
+                                binding.button,
+                                mods,
+                                qh,
+                                (seat_id, idx),
+                            );
+
+                            // Enable binding if it's for the current mode
+                            if binding.enabled {
+                                rwm_binding.enable();
+                            }
+
+                            *rwm_binding_slot = Some(rwm_binding);
+                        }
+                    }
+                }
+            }
+            Event::SessionLocked => {
+                state.context.borrow_mut().session_locked = true;
+                // Switch to lock mode
+                if let Some(seat_id) = state.context.borrow().current_seat {
+                    if let Some(seat) = state.context.borrow().seats.get(&seat_id) {
+                        seat.borrow_mut().switch_mode(config::Mode::Lock);
+                    }
+                }
+            }
+            Event::SessionUnlocked => {
+                state.context.borrow_mut().session_locked = false;
+                // Switch back to default mode
+                if let Some(seat_id) = state.context.borrow().current_seat {
+                    if let Some(seat) = state.context.borrow().seats.get(&seat_id) {
+                        seat.borrow_mut().switch_mode(config::Mode::Default);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn event_created_child(
+        opcode: u16,
+        qhandle: &QueueHandle<Self>,
+    ) -> std::sync::Arc<dyn wayland_client::backend::ObjectData> {
+        match opcode {
+            // window event (opcode 6) creates a river_window_v1
+            6 => qhandle.make_data::<RiverWindowV1, _>(0usize), // placeholder window id
+            // output event (opcode 7) creates a river_output_v1
+            7 => qhandle.make_data::<RiverOutputV1, _>(0usize), // placeholder output id
+            // seat event (opcode 8) creates a river_seat_v1
+            8 => qhandle.make_data::<RiverSeatV1, _>(0usize), // placeholder seat id
+            _ => unreachable!("unknown event opcode {}", opcode),
+        }
+    }
+}
+
+// Implement dispatch for River Window
+impl Dispatch<RiverWindowV1, rwm::WindowId> for AppState {
+    fn event(
+        state: &mut Self,
+        _proxy: &RiverWindowV1,
+        event: river_window_management_v1::client::river_window_v1::Event,
+        window_id: &rwm::WindowId,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use river_window_management_v1::client::river_window_v1::Event;
+
+        let context = state.context.borrow();
+        let window = match context.windows.get(window_id) {
+            Some(w) => w.clone(),
+            None => return,
+        };
+        drop(context);
+
+        match event {
+            Event::Closed => {
+                state.context.borrow_mut().destroy_window(*window_id);
+            }
+            Event::DimensionsHint {
+                min_width,
+                min_height,
+                ..
+            } => {
+                let mut w = window.borrow_mut();
+                w.min_width = min_width;
+                w.min_height = min_height;
+            }
+            Event::Dimensions { width, height } => {
+                window.borrow_mut().update_dimensions(width, height);
+            }
+            Event::AppId { app_id } => {
+                window.borrow_mut().app_id = app_id;
+            }
+            Event::Title { title } => {
+                window.borrow_mut().title = title;
+            }
+            Event::DecorationHint { hint } => {
+                // Convert WEnum to u32
+                if let wayland_client::WEnum::Value(h) = hint {
+                    window.borrow_mut().decoration_hint = h as u32;
+                }
+            }
+            Event::UnreliablePid { unreliable_pid } => {
+                let mut w = window.borrow_mut();
+                w.pid = unreliable_pid;
+
+                // Track terminal windows for swallowing
+                if w.is_terminal {
+                    state.context.borrow_mut().terminal_windows.insert(unreliable_pid, *window_id);
+                }
+            }
+            Event::PointerMoveRequested { seat } => {
+                // Find the seat and queue move action
+                let context = state.context.borrow();
+                if let Some((seat_id, seat_rc)) = context.seats.iter().find(|(_, s)| {
+                    s.borrow().rwm_seat.as_ref().map(|rs| rs == &seat).unwrap_or(false)
+                }) {
+                    window.borrow_mut().queue_event(
+                        rwm::WindowEvent::Move(Rc::downgrade(seat_rc))
+                    );
+                }
+            }
+            Event::PointerResizeRequested { seat, edges } => {
+                let context = state.context.borrow();
+                if let Some((_, seat_rc)) = context.seats.iter().find(|(_, s)| {
+                    s.borrow().rwm_seat.as_ref().map(|rs| rs == &seat).unwrap_or(false)
+                }) {
+                    // Convert WEnum<Edges> to u32
+                    let edges_u32 = if let wayland_client::WEnum::Value(e) = edges {
+                        e.bits()
+                    } else {
+                        0
+                    };
+                    window.borrow_mut().queue_event(
+                        rwm::WindowEvent::Resize(Rc::downgrade(seat_rc), edges_u32)
+                    );
+                }
+            }
+            Event::FullscreenRequested { output } => {
+                let output_weak = output.and_then(|o| {
+                    let context = state.context.borrow();
+                    context.outputs.iter().find_map(|(_, out)| {
+                        if out.borrow().rwm_output.as_ref().map(|ro| ro == &o).unwrap_or(false) {
+                            Some(Rc::downgrade(out))
+                        } else {
+                            None
+                        }
+                    })
+                });
+                window.borrow_mut().queue_event(
+                    rwm::WindowEvent::Fullscreen(output_weak)
+                );
+            }
+            Event::ExitFullscreenRequested => {
+                window.borrow_mut().queue_event(rwm::WindowEvent::Unfullscreen);
+            }
+            Event::MaximizeRequested => {
+                window.borrow_mut().queue_event(rwm::WindowEvent::Maximize);
+            }
+            Event::UnmaximizeRequested => {
+                window.borrow_mut().queue_event(rwm::WindowEvent::Unmaximize);
+            }
+            _ => {}
+        }
+    }
+}
+
+// Implement dispatch for River Node
+impl Dispatch<RiverNodeV1, rwm::WindowId> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &RiverNodeV1,
+        _event: river_window_management_v1::client::river_node_v1::Event,
+        _data: &rwm::WindowId,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // Node events would be handled here if needed
+    }
+}
+
+// Implement dispatch for River Output
+impl Dispatch<RiverOutputV1, rwm::OutputId> for AppState {
+    fn event(
+        state: &mut Self,
+        _proxy: &RiverOutputV1,
+        event: river_window_management_v1::client::river_output_v1::Event,
+        output_id: &rwm::OutputId,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use river_window_management_v1::client::river_output_v1::Event;
+
+        let context = state.context.borrow();
+        let output = match context.outputs.get(output_id) {
+            Some(o) => o.clone(),
+            None => return,
+        };
+        drop(context);
+
+        match event {
+            Event::Removed => {
+                state.context.borrow_mut().destroy_output(*output_id);
+            }
+            Event::WlOutput { name } => {
+                output.borrow_mut().wl_output_name = name;
+            }
+            Event::Position { x, y } => {
+                output.borrow_mut().update_position(x, y);
+            }
+            Event::Dimensions { width, height } => {
+                output.borrow_mut().update_dimensions(width, height);
+            }
+            _ => {}
+        }
+    }
+}
+
+// Implement dispatch for River Seat
+impl Dispatch<RiverSeatV1, rwm::SeatId> for AppState {
+    fn event(
+        state: &mut Self,
+        _proxy: &RiverSeatV1,
+        event: river_window_management_v1::client::river_seat_v1::Event,
+        seat_id: &rwm::SeatId,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use river_window_management_v1::client::river_seat_v1::Event;
+
+        let context = state.context.borrow();
+        let seat = match context.seats.get(seat_id) {
+            Some(s) => s.clone(),
+            None => return,
+        };
+        drop(context);
+
+        match event {
+            Event::Removed => {
+                state.context.borrow_mut().destroy_seat(*seat_id);
+            }
+            Event::WlSeat { name } => {
+                seat.borrow_mut().wl_seat_name = name;
+            }
+            Event::PointerEnter { window } => {
+                // Find the window
+                let context = state.context.borrow();
+                let found = context.windows.iter().find_map(|(id, w)| {
+                    if w.borrow().rwm_window.as_ref().map(|rw| rw == &window).unwrap_or(false) {
+                        Some((*id, Rc::downgrade(w)))
+                    } else {
+                        None
+                    }
+                });
+                let sloppy_focus = context.config.sloppy_focus;
+                drop(context);
+
+                if let Some((wid, weak)) = found {
+                    seat.borrow_mut().window_below_pointer = Some(weak);
+
+                    // Focus on hover if sloppy focus is enabled
+                    if sloppy_focus {
+                        state.context.borrow_mut().focus(wid);
+                    }
+                }
+            }
+            Event::PointerLeave => {
+                seat.borrow_mut().window_below_pointer = None;
+            }
+            Event::WindowInteraction { window } => {
+                // Always focus the window on click/interaction
+                let context = state.context.borrow();
+                if let Some((&wid, _)) = context.windows.iter().find(|(_, w)| {
+                    w.borrow().rwm_window.as_ref().map(|rw| rw == &window).unwrap_or(false)
+                }) {
+                    drop(context);
+                    log::debug!("Window interaction - focusing window {}", wid);
+                    state.context.borrow_mut().focus(wid);
+                }
+            }
+            Event::OpDelta { dx, dy } => {
+                // Apply delta to window being operated on
+                let context = state.context.borrow();
+                if let Some(wid) = context.focused_window {
+                    if let Some(window) = context.windows.get(&wid) {
+                        window.borrow_mut().apply_op_delta(dx, dy);
+                    }
+                }
+            }
+            Event::OpRelease => {
+                // End operation
+                let context = state.context.borrow();
+                if let Some(wid) = context.focused_window {
+                    if let Some(window) = context.windows.get(&wid) {
+                        window.borrow_mut().end_operation();
+                    }
+                }
+                seat.borrow().end_pointer_op();
+            }
+            Event::PointerPosition { x, y } => {
+                seat.borrow_mut().update_pointer_position(x, y);
+            }
+            _ => {}
+        }
+    }
+}
+
+// Implement dispatch for Layer Shell
+impl Dispatch<RiverLayerShellV1, ()> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &RiverLayerShellV1,
+        _event: river_layer_shell_v1::client::river_layer_shell_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // Layer shell global events
+    }
+}
+
+impl Dispatch<RiverLayerShellOutputV1, rwm::OutputId> for AppState {
+    fn event(
+        state: &mut Self,
+        _proxy: &RiverLayerShellOutputV1,
+        event: river_layer_shell_v1::client::river_layer_shell_output_v1::Event,
+        output_id: &rwm::OutputId,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use river_layer_shell_v1::client::river_layer_shell_output_v1::Event;
+
+        if let Event::NonExclusiveArea { x, y, width, height } = event {
+            if let Some(output) = state.context.borrow().outputs.get(output_id) {
+                output.borrow_mut().update_exclusive_area(x, y, width, height);
+            }
+        }
+    }
+}
+
+impl Dispatch<RiverLayerShellSeatV1, rwm::SeatId> for AppState {
+    fn event(
+        state: &mut Self,
+        _proxy: &RiverLayerShellSeatV1,
+        event: river_layer_shell_v1::client::river_layer_shell_seat_v1::Event,
+        seat_id: &rwm::SeatId,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use river_layer_shell_v1::client::river_layer_shell_seat_v1::Event;
+
+        if let Some(seat) = state.context.borrow().seats.get(seat_id) {
+            match event {
+                Event::FocusExclusive => {
+                    seat.borrow_mut().focus_exclusive = true;
+                }
+                Event::FocusNonExclusive | Event::FocusNone => {
+                    seat.borrow_mut().focus_exclusive = false;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+// Implement dispatch for XKB bindings
+impl Dispatch<RiverXkbBindingsV1, ()> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &RiverXkbBindingsV1,
+        _event: river_xkb_bindings_v1::client::river_xkb_bindings_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // XKB bindings global events
+    }
+}
+
+impl Dispatch<RiverXkbBindingV1, (rwm::SeatId, usize)> for AppState {
+    fn event(
+        state: &mut Self,
+        _proxy: &RiverXkbBindingV1,
+        event: river_xkb_bindings_v1::client::river_xkb_binding_v1::Event,
+        (seat_id, binding_idx): &(rwm::SeatId, usize),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use river_xkb_bindings_v1::client::river_xkb_binding_v1::Event;
+
+        log::debug!("XKB binding event: seat={}, binding_idx={}, event={:?}", seat_id, binding_idx, event);
+
+        if let Some(seat) = state.context.borrow().seats.get(seat_id) {
+            let seat = seat.clone();
+            let mut seat_ref = seat.borrow_mut();
+
+            if let Some((binding, _)) = seat_ref.xkb_bindings.get(*binding_idx) {
+                let action = binding.action.clone();
+                log::info!("Binding triggered: keysym={:#x}, mods={:#x}, enabled={}, action={:?}",
+                    binding.keysym, binding.modifiers, binding.enabled, action);
+
+                match event {
+                    Event::Pressed => {
+                        if binding.enabled && binding.event == binding::BindingEvent::Pressed {
+                            log::info!("Executing action: {:?}", action);
+                            seat_ref.queue_action(action);
+                        }
+                    }
+                    Event::Released => {
+                        if binding.enabled && binding.event == binding::BindingEvent::Released {
+                            log::info!("Executing action (on release): {:?}", action);
+                            seat_ref.queue_action(action);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Implement dispatch for Pointer bindings
+impl Dispatch<RiverPointerBindingV1, (rwm::SeatId, usize)> for AppState {
+    fn event(
+        state: &mut Self,
+        _proxy: &RiverPointerBindingV1,
+        event: river_window_management_v1::client::river_pointer_binding_v1::Event,
+        (seat_id, binding_idx): &(rwm::SeatId, usize),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use river_window_management_v1::client::river_pointer_binding_v1::Event;
+
+        if let Some(seat) = state.context.borrow().seats.get(seat_id) {
+            let seat = seat.clone();
+            let mut seat_ref = seat.borrow_mut();
+
+            if let Some((binding, _)) = seat_ref.pointer_bindings.get(*binding_idx) {
+                let action = binding.action.clone();
+
+                match event {
+                    Event::Pressed => {
+                        if binding.enabled && binding.event == binding::BindingEvent::Pressed {
+                            seat_ref.queue_action(action);
+                        }
+                    }
+                    Event::Released => {
+                        if binding.enabled && binding.event == binding::BindingEvent::Released {
+                            seat_ref.queue_action(action);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+// Implement dispatch for Input Manager
+impl Dispatch<RiverInputManagerV1, ()> for AppState {
+    fn event(
+        state: &mut Self,
+        _proxy: &RiverInputManagerV1,
+        event: river_input_management_v1::client::river_input_manager_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        use river_input_management_v1::client::river_input_manager_v1::Event;
+
+        match event {
+            Event::InputDevice { id } => {
+                // Input device created - configure it
+                let config = &state.context.borrow().config;
+                id.set_repeat_info(config.repeat_rate, config.repeat_delay);
+                id.set_scroll_factor(config.scroll_factor);
+            }
+            _ => {}
+        }
+    }
+
+    fn event_created_child(
+        opcode: u16,
+        qhandle: &QueueHandle<Self>,
+    ) -> std::sync::Arc<dyn wayland_client::backend::ObjectData> {
+        match opcode {
+            // input_device event (opcode 1) creates a river_input_device_v1
+            1 => qhandle.make_data::<RiverInputDeviceV1, _>(()),
+            _ => unreachable!("unknown event opcode {}", opcode),
+        }
+    }
+}
+
+impl Dispatch<RiverInputDeviceV1, ()> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &RiverInputDeviceV1,
+        _event: river_input_management_v1::client::river_input_device_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // Input device events
+    }
+}
+
+// Implement dispatch for Libinput Config
+impl Dispatch<RiverLibinputConfigV1, ()> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &RiverLibinputConfigV1,
+        _event: river_libinput_config_v1::client::river_libinput_config_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // Libinput config events
+    }
+}
+
+impl Dispatch<RiverLibinputDeviceV1, ()> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &RiverLibinputDeviceV1,
+        _event: river_libinput_config_v1::client::river_libinput_device_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // Libinput device events
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize logging
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
+    log::info!("RWM - River Window Manager starting");
+
+    // Connect to Wayland display
+    let conn = Connection::connect_to_env()?;
+    let display = conn.display();
+
+    // Create event queue
+    let mut event_queue: EventQueue<AppState> = conn.new_event_queue();
+    let qh = event_queue.handle();
+
+    // Create app state
+    let context = Rc::new(RefCell::new(Context::new()));
+    let mut state = AppState {
+        context: context.clone(),
+        globals: Globals::default(),
+    };
+
+    // Get registry and collect globals
+    let _registry = display.get_registry(&qh, ());
+
+    // Roundtrip to receive globals
+    event_queue.roundtrip(&mut state)?;
+
+    // Check required globals
+    if state.globals.rwm.is_none() {
+        log::error!("river_window_manager_v1 not available - is River running?");
+        return Err("River window manager protocol not available".into());
+    }
+
+    // Set up signal handling
+    let mut mask = SigSet::empty();
+    mask.add(Signal::SIGINT);
+    mask.add(Signal::SIGTERM);
+    mask.add(Signal::SIGQUIT);
+    mask.add(Signal::SIGCHLD);
+    mask.thread_block()?;
+
+    let signal_fd = SignalFd::with_flags(&mask, SfdFlags::SFD_NONBLOCK)?;
+
+    // Run startup commands
+    for cmd in &state.context.borrow().config.startup_cmds.clone() {
+        state.context.borrow().spawn(cmd);
+    }
+
+    log::info!("RWM initialized, entering main loop");
+
+    // Main event loop
+    while state.context.borrow().running {
+        // Flush outgoing requests
+        conn.flush()?;
+
+        // Prepare poll file descriptors
+        let wayland_fd = conn.as_fd();
+        let signal_raw_fd = signal_fd.as_raw_fd();
+
+        let mut poll_fds = [
+            PollFd::new(wayland_fd, PollFlags::POLLIN),
+            PollFd::new(signal_fd.as_fd(), PollFlags::POLLIN),
+        ];
+
+        // Poll for events (None = infinite timeout)
+        match poll(&mut poll_fds, None::<u16>) {
+            Ok(_) => {}
+            Err(nix::errno::Errno::EINTR) => continue,
+            Err(e) => return Err(e.into()),
+        }
+
+        // Handle Wayland events
+        if poll_fds[0].revents().map(|r| r.contains(PollFlags::POLLIN)).unwrap_or(false) {
+            event_queue.dispatch_pending(&mut state)?;
+
+            // Read and dispatch new events
+            if let Some(guard) = conn.prepare_read() {
+                match guard.read() {
+                    Ok(_) => {}
+                    Err(wayland_client::backend::WaylandError::Io(e))
+                        if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(e) => return Err(e.into()),
+                }
+            }
+            event_queue.dispatch_pending(&mut state)?;
+        }
+
+        // Handle signals
+        if poll_fds[1].revents().map(|r| r.contains(PollFlags::POLLIN)).unwrap_or(false) {
+            if let Ok(Some(sig_info)) = signal_fd.read_signal() {
+                match Signal::try_from(sig_info.ssi_signo as i32) {
+                    Ok(Signal::SIGINT) | Ok(Signal::SIGTERM) | Ok(Signal::SIGQUIT) => {
+                        log::info!("Received termination signal, shutting down");
+                        state.context.borrow_mut().running = false;
+                    }
+                    Ok(Signal::SIGCHLD) => {
+                        // Reap child processes
+                        loop {
+                            match nix::sys::wait::waitpid(
+                                None,
+                                Some(nix::sys::wait::WaitPidFlag::WNOHANG),
+                            ) {
+                                Ok(nix::sys::wait::WaitStatus::StillAlive) => break,
+                                Ok(_) => continue,
+                                Err(_) => break,
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    log::info!("RWM shutting down");
+    Ok(())
+}
