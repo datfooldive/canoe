@@ -4,7 +4,7 @@ use crate::protocol::RiverDecorationV1;
 use fontdue::{Font, FontSettings};
 use std::os::fd::AsFd;
 use std::sync::OnceLock;
-use wayland_client::protocol::{wl_buffer, wl_shm, wl_shm_pool, wl_surface};
+use wayland_client::protocol::{wl_buffer, wl_compositor, wl_region, wl_shm, wl_shm_pool, wl_surface};
 use wayland_client::QueueHandle;
 
 /// Titlebar height in pixels
@@ -316,6 +316,32 @@ impl Titlebar {
             self.surface.damage_buffer(0, 0, self.width, self.height);
             self.surface.commit();
         }
+    }
+
+    /// Limit input to the frame (titlebar + borders), let content receive clicks.
+    pub fn update_input_region<D: 'static>(
+        &self,
+        compositor: &wl_compositor::WlCompositor,
+        qh: &QueueHandle<D>,
+    ) where
+        D: wayland_client::Dispatch<wl_region::WlRegion, ()>,
+    {
+        if self.width <= 0 || self.height <= 0 {
+            return;
+        }
+
+        let region = compositor.create_region(qh, ());
+        region.add(0, 0, self.width, self.height);
+        if self.content_width > 0 && self.content_height > 0 {
+            region.subtract(
+                BORDER_WIDTH,
+                BORDER_WIDTH + TITLEBAR_HEIGHT,
+                self.content_width,
+                self.content_height,
+            );
+        }
+        self.surface.set_input_region(Some(&region));
+        region.destroy();
     }
 
     /// Set the offset position relative to window

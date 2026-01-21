@@ -22,7 +22,8 @@ use nix::sys::signal::{SigSet, Signal};
 use nix::sys::signalfd::{SfdFlags, SignalFd};
 
 use wayland_client::protocol::{
-    wl_buffer, wl_compositor, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
+    wl_buffer, wl_compositor, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm, wl_shm_pool,
+    wl_surface,
 };
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle};
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::WpCursorShapeDeviceV1;
@@ -242,6 +243,9 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                             if width > 0 && height > 0 {
                                 // Ensure buffer is allocated
                                 titlebar.ensure_buffer(width, height, shm, qh);
+                                if let Some(ref compositor) = state.globals.compositor {
+                                    titlebar.update_input_region(compositor, qh);
+                                }
 
                                 // Render titlebar content
                                 titlebar.render(title.as_deref(), is_focused);
@@ -922,6 +926,19 @@ impl Dispatch<wl_compositor::WlCompositor, ()> for AppState {
         _qh: &QueueHandle<Self>,
     ) {
         // wl_compositor has no events
+    }
+}
+
+impl Dispatch<wl_region::WlRegion, ()> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_region::WlRegion,
+        _event: wl_region::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // wl_region has no events
     }
 }
 
