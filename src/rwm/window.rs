@@ -133,6 +133,12 @@ pub struct Window {
     /// Per-window scroller mfact
     pub scroller_mfact: Option<f32>,
 
+    /// Titlebar for server-side decoration
+    pub titlebar: Option<super::Titlebar>,
+
+    /// Window needs to be configured (propose_dimensions)
+    pub needs_configure: bool,
+
     /// Proposed dimensions (for layout)
     proposed_width: i32,
     proposed_height: i32,
@@ -172,6 +178,8 @@ impl Window {
             unhandled_events: VecDeque::new(),
             position_undefined: true,
             scroller_mfact: None,
+            titlebar: None,
+            needs_configure: true,
             proposed_width: 0,
             proposed_height: 0,
         }

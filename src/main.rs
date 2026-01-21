@@ -20,7 +20,7 @@ use nix::poll::{poll, PollFd, PollFlags};
 use nix::sys::signal::{SigSet, Signal};
 use nix::sys::signalfd::{SfdFlags, SignalFd};
 
-use wayland_client::protocol::wl_registry;
+use wayland_client::protocol::{wl_buffer, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_surface};
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle};
 
 /// Application state for Wayland dispatch
@@ -32,6 +32,8 @@ struct AppState {
 /// Collected Wayland globals
 #[derive(Default)]
 struct Globals {
+    compositor: Option<wl_compositor::WlCompositor>,
+    shm: Option<wl_shm::WlShm>,
     rwm: Option<RiverWindowManagerV1>,
     rwm_xkb_bindings: Option<RiverXkbBindingsV1>,
     rwm_layer_shell: Option<RiverLayerShellV1>,
@@ -55,6 +57,17 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
         } = event
         {
             match interface.as_str() {
+                "wl_compositor" => {
+                    log::info!("Binding wl_compositor v{}", version.min(4));
+                    let compositor: wl_compositor::WlCompositor =
+                        registry.bind(name, version.min(4), qh, ());
+                    state.globals.compositor = Some(compositor);
+                }
+                "wl_shm" => {
+                    log::info!("Binding wl_shm v{}", version.min(1));
+                    let shm: wl_shm::WlShm = registry.bind(name, version.min(1), qh, ());
+                    state.globals.shm = Some(shm);
+                }
                 "river_window_manager_v1" => {
                     let rwm: RiverWindowManagerV1 =
                         registry.bind(name, version.min(2), qh, ());
@@ -114,14 +127,97 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
             }
             Event::RenderStart => {
                 state.context.borrow_mut().handle_render_start();
+
+                // Update titlebars
+                if let Some(ref shm) = state.globals.shm {
+                    let context = state.context.borrow();
+                    let border_color = context.config.border_color;
+                    let focused_window = context.focused_window;
+
+                    for (&window_id, window) in &context.windows {
+                        let mut w = window.borrow_mut();
+
+                        // Skip hidden windows
+                        if w.hidden {
+                            continue;
+                        }
+
+                        // Extract window data before borrowing titlebar
+                        let width = w.width;
+                        let title = w.title.clone();
+                        let is_focused = focused_window == Some(window_id);
+                        let color = if is_focused {
+                            border_color.focus
+                        } else {
+                            border_color.unfocus
+                        };
+
+                        // Update titlebar if it exists and window has valid dimensions
+                        if let Some(ref mut titlebar) = w.titlebar {
+                            log::info!("Window {} titlebar: width={}, has_buffer={}",
+                                window_id, width, titlebar.buffer.is_some());
+                            if width > 0 {
+                                // Ensure buffer is allocated
+                                titlebar.ensure_buffer(width, shm, qh);
+
+                                // Debug: use different colors for each window
+                                let debug_color = match window_id % 3 {
+                                    0 => 0xff0000ff, // Red
+                                    1 => 0x00ff00ff, // Green
+                                    _ => 0x0000ffff, // Blue
+                                };
+
+                                // Render titlebar content
+                                titlebar.render(debug_color, title.as_deref());
+                                log::info!("Window {} titlebar rendered with color {:08x}", window_id, debug_color);
+
+                                // Position titlebar above window (negative Y offset)
+                                let titlebar_height = rwm::titlebar::TITLEBAR_HEIGHT;
+                                titlebar.set_offset(0, -titlebar_height);
+
+                                // Sync and commit (only if we have a buffer)
+                                if titlebar.buffer.is_some() {
+                                    titlebar.sync_next_commit();
+                                    titlebar.commit();
+                                    log::info!("Window {} titlebar committed (width={})", window_id, width);
+                                }
+                            } else {
+                                log::info!("Window {} titlebar skipped: width=0", window_id);
+                            }
+                        } else {
+                            log::warn!("Window {} has no titlebar!", window_id);
+                        }
+                    }
+                }
+
                 state.context.borrow().finish_render();
             }
             Event::Window { id } => {
                 let window = state.context.borrow_mut().create_window(id.clone());
+                let window_id = window.borrow().id;
 
                 // Get the node for this window
-                let node: RiverNodeV1 = id.get_node(qh, window.borrow().id);
+                let node: RiverNodeV1 = id.get_node(qh, window_id);
                 window.borrow_mut().rwm_node = Some(node);
+
+                // Create titlebar if compositor is available
+                if let Some(ref compositor) = state.globals.compositor {
+                    log::info!("Creating titlebar surface for window {}", window_id);
+
+                    // Create surface for titlebar
+                    let surface = compositor.create_surface(qh, TitlebarSurfaceData { window_id });
+
+                    // Create decoration for titlebar (above window content)
+                    let decoration: RiverDecorationV1 = id.get_decoration_above(&surface, qh, window_id);
+
+                    // Create titlebar
+                    let titlebar = rwm::Titlebar::new(surface, decoration);
+                    window.borrow_mut().titlebar = Some(titlebar);
+
+                    log::info!("Created titlebar for window {}", window_id);
+                } else {
+                    log::warn!("No compositor available, cannot create titlebar for window {}", window_id);
+                }
 
                 // Queue init event
                 window.borrow_mut().queue_event(rwm::WindowEvent::Init);
@@ -245,35 +341,47 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
 impl Dispatch<RiverWindowV1, rwm::WindowId> for AppState {
     fn event(
         state: &mut Self,
-        _proxy: &RiverWindowV1,
+        proxy: &RiverWindowV1,
         event: river_window_management_v1::client::river_window_v1::Event,
-        window_id: &rwm::WindowId,
+        _window_id: &rwm::WindowId, // Don't use this - it's always 0 from event_created_child
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
         use river_window_management_v1::client::river_window_v1::Event;
 
+        // Find window by matching the RiverWindowV1 object, not by user data
         let context = state.context.borrow();
-        let window = match context.windows.get(window_id) {
-            Some(w) => w.clone(),
+        let found = context.windows.iter().find_map(|(&id, w)| {
+            if w.borrow().rwm_window.as_ref().map(|rw| rw == proxy).unwrap_or(false) {
+                Some((id, w.clone()))
+            } else {
+                None
+            }
+        });
+        let (window_id, window) = match found {
+            Some(f) => f,
             None => return,
         };
         drop(context);
 
         match event {
             Event::Closed => {
-                state.context.borrow_mut().destroy_window(*window_id);
+                state.context.borrow_mut().destroy_window(window_id);
             }
             Event::DimensionsHint {
                 min_width,
                 min_height,
-                ..
+                max_width,
+                max_height,
             } => {
+                log::info!("Window {} DimensionsHint: min={}x{}, max={}x{}",
+                    window_id, min_width, min_height, max_width, max_height);
                 let mut w = window.borrow_mut();
                 w.min_width = min_width;
                 w.min_height = min_height;
             }
             Event::Dimensions { width, height } => {
+                log::info!("Window {} received Dimensions event: {}x{}", window_id, width, height);
                 window.borrow_mut().update_dimensions(width, height);
             }
             Event::AppId { app_id } => {
@@ -294,7 +402,7 @@ impl Dispatch<RiverWindowV1, rwm::WindowId> for AppState {
 
                 // Track terminal windows for swallowing
                 if w.is_terminal {
-                    state.context.borrow_mut().terminal_windows.insert(unreliable_pid, *window_id);
+                    state.context.borrow_mut().terminal_windows.insert(unreliable_pid, window_id);
                 }
             }
             Event::PointerMoveRequested { seat } => {
@@ -715,6 +823,94 @@ impl Dispatch<RiverLibinputDeviceV1, ()> for AppState {
         _qh: &QueueHandle<Self>,
     ) {
         // Libinput device events
+    }
+}
+
+// Standard Wayland protocol dispatches for titlebar surfaces
+impl Dispatch<wl_compositor::WlCompositor, ()> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_compositor::WlCompositor,
+        _event: wl_compositor::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // wl_compositor has no events
+    }
+}
+
+impl Dispatch<wl_shm::WlShm, ()> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_shm::WlShm,
+        event: wl_shm::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let wl_shm::Event::Format { format: _ } = event {
+            // We only need ARGB8888 which is always available
+        }
+    }
+}
+
+impl Dispatch<wl_shm_pool::WlShmPool, ()> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_shm_pool::WlShmPool,
+        _event: wl_shm_pool::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // wl_shm_pool has no events
+    }
+}
+
+impl Dispatch<wl_buffer::WlBuffer, ()> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_buffer::WlBuffer,
+        event: wl_buffer::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let wl_buffer::Event::Release = event {
+            // Buffer is no longer in use by compositor
+        }
+    }
+}
+
+// Titlebar surface user data
+struct TitlebarSurfaceData {
+    window_id: rwm::WindowId,
+}
+
+impl Dispatch<wl_surface::WlSurface, TitlebarSurfaceData> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_surface::WlSurface,
+        _event: wl_surface::Event,
+        _data: &TitlebarSurfaceData,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // Surface events (enter/leave output) - not needed for titlebars
+    }
+}
+
+impl Dispatch<RiverDecorationV1, rwm::WindowId> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &RiverDecorationV1,
+        _event: river_window_management_v1::client::river_decoration_v1::Event,
+        _data: &rwm::WindowId,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // river_decoration_v1 has no events
     }
 }
 

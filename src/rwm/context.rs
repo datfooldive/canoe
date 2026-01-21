@@ -906,9 +906,16 @@ impl Context {
                         w.set_decoration(decoration);
                     }
 
-                    // Stacking WM: don't auto-position windows
-                    // Users can move windows with Alt+Drag
-                    // Windows keep their compositor-assigned position
+                    // We must call propose_dimensions for windows to be displayed.
+                    // The protocol says (0,0) means "let window decide" but that
+                    // gives us the window's minimum size (often tiny).
+                    // Use a reasonable default that most windows will fit into.
+                    // The window will respond with its actual dimensions.
+                    let default_width = 800;
+                    let default_height = 600;
+                    log::info!("Window {} init - proposing default dimensions {}x{}",
+                        window_id, default_width, default_height);
+                    w.propose_dimensions(default_width, default_height);
                 }
 
                 // Focus the new window
