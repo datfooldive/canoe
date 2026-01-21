@@ -160,16 +160,9 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                                 // Ensure buffer is allocated
                                 titlebar.ensure_buffer(width, shm, qh);
 
-                                // Debug: use different colors for each window
-                                let debug_color = match window_id % 3 {
-                                    0 => 0xff0000ff, // Red
-                                    1 => 0x00ff00ff, // Green
-                                    _ => 0x0000ffff, // Blue
-                                };
-
                                 // Render titlebar content
-                                titlebar.render(debug_color, title.as_deref());
-                                log::info!("Window {} titlebar rendered with color {:08x}", window_id, debug_color);
+                                titlebar.render(title.as_deref(), is_focused);
+                                log::info!("Window {} titlebar rendered, focused={}", window_id, is_focused);
 
                                 // Position titlebar above window (negative Y offset)
                                 let titlebar_height = rwm::titlebar::TITLEBAR_HEIGHT;
