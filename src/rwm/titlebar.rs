@@ -25,6 +25,10 @@ const BG_COLOR_INACTIVE: u32 = 0x666666FF;
 /// Text color for titlebar (white)
 const TEXT_COLOR: u32 = 0xFFFFFFFF;
 
+/// Button background color (light gray)
+const BUTTON_BG_COLOR: u32 = 0xC0C0C0FF;
+const BUTTON_LIGHT_EDGE: u32 = 0xFFFFFFFF;
+
 /// Border colors
 const BORDER_COLOR_OUTER: u32 = 0x000000FF;
 const BORDER_COLOR_MID: u32 = 0x888888FF;
@@ -36,6 +40,66 @@ const BORDER_INNER: i32 = 1;
 
 /// Horizontal padding for title text
 const TITLE_PADDING: i32 = 8;
+
+const BUTTON_PADDING_X: i32 = 0;
+const BUTTON_GAP: i32 = 1;
+
+#[derive(Clone, Copy, Debug)]
+pub struct Rect {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl Rect {
+    pub fn contains(&self, px: i32, py: i32) -> bool {
+        px >= self.x
+            && px < self.x + self.width
+            && py >= self.y
+            && py < self.y + self.height
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TitlebarButtons {
+    pub close: Rect,
+    pub hide: Rect,
+    pub maximize: Rect,
+}
+
+pub fn button_rects(content_width: i32) -> TitlebarButtons {
+    let size = TITLEBAR_HEIGHT;
+    let y = 0;
+    let close = Rect {
+        x: BUTTON_PADDING_X,
+        y,
+        width: size,
+        height: size,
+    };
+
+    let right_outer_x = content_width - BUTTON_PADDING_X - size;
+    let right_inner_x = right_outer_x - size - BUTTON_GAP;
+
+    let maximize = Rect {
+        x: right_outer_x.max(0),
+        y,
+        width: size,
+        height: size,
+    };
+    let hide = Rect {
+        x: right_inner_x.max(0),
+        y,
+        width: size,
+        height: size,
+    };
+
+    TitlebarButtons {
+        close,
+        hide,
+        maximize,
+    }
+}
 
 /// Get or initialize the titlebar font
 fn get_font() -> Option<&'static Font> {
@@ -274,6 +338,99 @@ impl Titlebar {
                     bg_argb,
                 );
 
+                let buttons = button_rects(content_width);
+                let button_bg = rgba_to_argb(BUTTON_BG_COLOR);
+                let button_border = rgba_to_argb(BORDER_COLOR_OUTER);
+
+                fill_rect(
+                    pixels,
+                    width,
+                    height,
+                    title_x + buttons.close.x,
+                    title_y + buttons.close.y,
+                    buttons.close.width,
+                    title_height,
+                    button_bg,
+                );
+                draw_glyph_close(
+                    pixels,
+                    width,
+                    height,
+                    title_x + buttons.close.x,
+                    title_y + buttons.close.y,
+                    buttons.close.width,
+                    button_border,
+                );
+                draw_left_border(
+                    pixels,
+                    width,
+                    height,
+                    title_x + buttons.close.x + buttons.close.width,
+                    title_y,
+                    title_height,
+                    button_border,
+                );
+
+                draw_button_bevel(
+                    pixels,
+                    width,
+                    height,
+                    title_x + buttons.hide.x,
+                    title_y + buttons.hide.y,
+                    buttons.hide.width,
+                    button_bg,
+                    button_border,
+                );
+                draw_left_border(
+                    pixels,
+                    width,
+                    height,
+                    title_x + buttons.hide.x - 1,
+                    title_y,
+                    title_height,
+                    button_border,
+                );
+                draw_glyph_caret(
+                    pixels,
+                    width,
+                    height,
+                    title_x + buttons.hide.x,
+                    title_y + buttons.hide.y,
+                    buttons.hide.width,
+                    button_border,
+                    true,
+                );
+
+                draw_button_bevel(
+                    pixels,
+                    width,
+                    height,
+                    title_x + buttons.maximize.x,
+                    title_y + buttons.maximize.y,
+                    buttons.maximize.width,
+                    button_bg,
+                    button_border,
+                );
+                draw_left_border(
+                    pixels,
+                    width,
+                    height,
+                    title_x + buttons.maximize.x - 1,
+                    title_y,
+                    title_height,
+                    button_border,
+                );
+                draw_glyph_caret(
+                    pixels,
+                    width,
+                    height,
+                    title_x + buttons.maximize.x,
+                    title_y + buttons.maximize.y,
+                    buttons.maximize.width,
+                    button_border,
+                    false,
+                );
+
                 let separator_y = title_y + title_height;
                 if separator_y >= 0 && separator_y < height - BORDER_WIDTH {
                     fill_rect(
@@ -291,16 +448,22 @@ impl Titlebar {
                 // Render title text if we have a title and font
                 if let Some(title_str) = title {
                     if !title_str.is_empty() {
-                        render_title(
-                            pixels,
-                            width,
-                            height,
-                            title_str,
-                            title_x,
-                            title_y,
-                            content_width,
-                            title_height,
-                        );
+                        let text_start = (buttons.close.x + buttons.close.width + BUTTON_GAP)
+                            .max(0);
+                        let text_end = (buttons.maximize.x - BUTTON_GAP).min(content_width);
+                        let text_width = (text_end - text_start).max(0);
+                        if text_width > 0 {
+                            render_title(
+                                pixels,
+                                width,
+                                height,
+                                title_str,
+                                title_x + text_start,
+                                title_y,
+                                text_width,
+                                title_height,
+                            );
+                        }
                     }
                 }
             }
@@ -565,6 +728,148 @@ fn draw_border_layer(
         layer_height - thickness * 2,
         argb,
     );
+}
+
+fn draw_button_bevel(
+    pixels: &mut [u8],
+    buffer_width: i32,
+    buffer_height: i32,
+    x: i32,
+    y: i32,
+    size: i32,
+    bg_argb: u32,
+    border_argb: u32,
+) {
+    let light_argb = rgba_to_argb(BUTTON_LIGHT_EDGE);
+    let shadow_argb = rgba_to_argb(BORDER_COLOR_MID);
+
+    fill_rect(pixels, buffer_width, buffer_height, x, y, size, size, bg_argb);
+    fill_rect(pixels, buffer_width, buffer_height, x, y, size, 1, light_argb);
+    fill_rect(pixels, buffer_width, buffer_height, x, y, 1, size, light_argb);
+
+    if size >= 3 {
+        fill_rect(
+            pixels,
+            buffer_width,
+            buffer_height,
+            x,
+            y + size - 2,
+            size - 1,
+            1,
+            shadow_argb,
+        );
+        fill_rect(
+            pixels,
+            buffer_width,
+            buffer_height,
+            x + size - 2,
+            y + 1,
+            1,
+            size - 2,
+            shadow_argb,
+        );
+    }
+
+    fill_rect(
+        pixels,
+        buffer_width,
+        buffer_height,
+        x,
+        y + size - 1,
+        size - 1,
+        1,
+        shadow_argb,
+    );
+    fill_rect(
+        pixels,
+        buffer_width,
+        buffer_height,
+        x + size - 1,
+        y + 1,
+        1,
+        size - 2,
+        shadow_argb,
+    );
+}
+
+fn draw_left_border(
+    pixels: &mut [u8],
+    buffer_width: i32,
+    buffer_height: i32,
+    x: i32,
+    y: i32,
+    height: i32,
+    color_argb: u32,
+) {
+    if x < 0 {
+        return;
+    }
+    fill_rect(pixels, buffer_width, buffer_height, x, y, 1, height, color_argb);
+}
+
+fn draw_glyph_close(
+    pixels: &mut [u8],
+    buffer_width: i32,
+    buffer_height: i32,
+    x: i32,
+    y: i32,
+    size: i32,
+    color_argb: u32,
+) {
+    let inner_size = (size - 2).max(1);
+    let line_y = y + 1 + (inner_size - 1) / 2;
+    let line_x = x + 6;
+    let line_w = size - 12;
+    if line_w > 0 {
+        fill_rect(
+            pixels,
+            buffer_width,
+            buffer_height,
+            line_x,
+            line_y,
+            line_w,
+            1,
+            color_argb,
+        );
+    }
+}
+
+fn draw_glyph_caret(
+    pixels: &mut [u8],
+    buffer_width: i32,
+    buffer_height: i32,
+    x: i32,
+    y: i32,
+    size: i32,
+    color_argb: u32,
+    down: bool,
+) {
+    let span = (size / 4).max(2);
+    let glyph_height = span * 2 + 1;
+    let inner_size = (size - 2).max(1);
+    let top_y = y + 1 + (inner_size - glyph_height) / 2 + 4;
+    let mid_x = x + size / 2;
+
+    for i in 0..=span {
+        let row = top_y + i;
+        let (start, width) = if down {
+            let w = 1 + (span - i) * 2;
+            (mid_x - (span - i), w)
+        } else {
+            let w = 1 + i * 2;
+            (mid_x - i, w)
+        };
+        fill_rect(
+            pixels,
+            buffer_width,
+            buffer_height,
+            start,
+            row,
+            width,
+            1,
+            color_argb,
+        );
+    }
 }
 
 impl Drop for Titlebar {

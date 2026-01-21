@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use super::{Output, OutputId, Seat, SeatId, Window, WindowId};
 
@@ -386,6 +387,16 @@ impl Context {
             }
             Action::Zoom => {
                 self.zoom();
+            }
+            Action::HideFocused => {
+                if let Some(window_id) = self.focused_window {
+                    self.hide_window(window_id);
+                }
+            }
+            Action::MaximizeFocused => {
+                if let Some(window_id) = self.focused_window {
+                    self.maximize_window(window_id);
+                }
             }
             Action::SetOutputTag { tag } => {
                 if let Some(output_id) = self.current_output {
@@ -763,6 +774,8 @@ impl Context {
 
     /// Start move/resize based on pointer location within the window frame
     pub fn handle_window_interaction(&mut self, seat_id: SeatId, window_id: WindowId) {
+        const CLOSE_DOUBLE_CLICK: Duration = Duration::from_millis(400);
+
         let seat = match self.seats.get(&seat_id) {
             Some(seat) => seat.clone(),
             None => return,
@@ -809,6 +822,55 @@ impl Context {
             return;
         }
 
+        if has_titlebar {
+            let titlebar_origin_x = x;
+            let titlebar_origin_y = y - titlebar_height;
+            let local_x = px - titlebar_origin_x;
+            let local_y = py - titlebar_origin_y;
+
+            if local_x >= 0 && local_x < width && local_y >= 0 && local_y < titlebar_height {
+                let buttons = super::titlebar::button_rects(width);
+
+                if buttons.close.contains(local_x, local_y) {
+                    let now = Instant::now();
+                    let should_close = {
+                        let mut seat_ref = seat.borrow_mut();
+                        let is_double = seat_ref
+                            .last_close_click
+                            .map(|(last_window, when)| {
+                                last_window == window_id && now.duration_since(when) <= CLOSE_DOUBLE_CLICK
+                            })
+                            .unwrap_or(false);
+                        seat_ref.last_close_click = Some((window_id, now));
+                        is_double
+                    };
+
+                    if should_close {
+                        window.borrow().close();
+                    }
+                    return;
+                }
+
+                seat.borrow_mut().last_close_click = None;
+
+                if buttons.hide.contains(local_x, local_y) {
+                    self.hide_window(window_id);
+                    return;
+                }
+
+                if buttons.maximize.contains(local_x, local_y) {
+                    self.maximize_window(window_id);
+                    return;
+                }
+
+                let mut w = window.borrow_mut();
+                w.floating = true;
+                w.start_move(Rc::downgrade(&seat));
+                seat.borrow().start_pointer_op();
+                return;
+            }
+        }
+
         if has_titlebar && point_in_titlebar(x, y, width, titlebar_height, px, py) {
             let mut w = window.borrow_mut();
             w.floating = true;
@@ -840,6 +902,46 @@ impl Context {
                     w.set_position(new_x, new_y);
                 }
             }
+        }
+    }
+
+    fn hide_window(&mut self, window_id: WindowId) {
+        if let Some(window) = self.windows.get(&window_id) {
+            window.borrow_mut().hide();
+        }
+    }
+
+    fn maximize_window(&mut self, window_id: WindowId) {
+        let border_width = super::titlebar::BORDER_WIDTH;
+        let titlebar_height = super::titlebar::TITLEBAR_HEIGHT;
+
+        let output = self
+            .windows
+            .get(&window_id)
+            .and_then(|window| window.borrow().output.as_ref().and_then(|weak| weak.upgrade()))
+            .or_else(|| {
+                self.current_output
+                    .and_then(|oid| self.outputs.get(&oid))
+                    .cloned()
+            });
+
+        let Some(output) = output else {
+            return;
+        };
+
+        let (ox, oy, ow, oh) = output.borrow().usable_area();
+        let content_w = (ow - border_width * 2).max(1);
+        let content_h = (oh - border_width * 2 - titlebar_height).max(1);
+        let content_x = ox + border_width;
+        let content_y = oy + border_width + titlebar_height;
+
+        if let Some(window) = self.windows.get(&window_id) {
+            let mut w = window.borrow_mut();
+            w.floating = true;
+            w.set_position(content_x, content_y);
+            w.propose_dimensions(content_w, content_h);
+            w.maximized = true;
+            w.inform_maximized();
         }
     }
 

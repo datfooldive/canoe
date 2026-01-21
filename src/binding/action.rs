@@ -108,6 +108,11 @@ pub enum Action {
     /// Zoom (swap with master)
     Zoom,
 
+    /// Hide (minimize) the focused window
+    HideFocused,
+    /// Maximize the focused window to the output
+    MaximizeFocused,
+
     /// Set output tags
     SetOutputTag { tag: u32 },
     /// Set window tags
@@ -141,6 +146,8 @@ pub fn default_xkb_bindings() -> Vec<(Mode, u32, u32, Action)> {
         // Essential window management
         (Mode::Default, Keysym::q.raw(), alt | shift, Action::Quit),
         (Mode::Default, Keysym::c.raw(), alt | shift, Action::Close),
+        (Mode::Default, Keysym::Down.raw(), alt, Action::HideFocused),
+        (Mode::Default, Keysym::Up.raw(), alt, Action::MaximizeFocused),
 
         // Focus navigation (cycle through windows)
         (

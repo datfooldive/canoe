@@ -8,11 +8,14 @@ use crate::protocol::{
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Weak;
+use std::time::Instant;
 use wayland_client::protocol::wl_pointer::WlPointer;
 use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::{
     Shape as CursorShape, WpCursorShapeDeviceV1,
 };
+
+use super::WindowId;
 
 /// Seat identifier
 pub type SeatId = usize;
@@ -50,6 +53,9 @@ pub struct Seat {
     /// Window currently under the pointer
     pub window_below_pointer: Option<Weak<RefCell<super::Window>>>,
 
+    /// Last close-button click for double-click detection
+    pub last_close_click: Option<(WindowId, Instant)>,
+
     /// Pending actions to execute during manage phase
     pub unhandled_actions: VecDeque<Action>,
 
@@ -80,6 +86,7 @@ impl Seat {
             pointer_x: 0,
             pointer_y: 0,
             window_below_pointer: None,
+            last_close_click: None,
             unhandled_actions: VecDeque::new(),
             xkb_bindings: Vec::new(),
             pointer_bindings: Vec::new(),
