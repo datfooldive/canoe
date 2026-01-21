@@ -39,6 +39,8 @@ pub enum Operator {
         seat: Option<Weak<RefCell<super::Seat>>>,
     },
     Resize {
+        start_x: i32,
+        start_y: i32,
         start_width: i32,
         start_height: i32,
         edges: u32,
@@ -397,6 +399,8 @@ impl Window {
     /// Start a resize operation
     pub fn start_resize(&mut self, seat: Weak<RefCell<super::Seat>>, edges: u32) {
         self.operator = Operator::Resize {
+            start_x: self.x,
+            start_y: self.y,
             start_width: self.width,
             start_height: self.height,
             edges,
@@ -425,6 +429,8 @@ impl Window {
                 self.set_position(*start_x + dx, *start_y + dy);
             }
             Operator::Resize {
+                start_x,
+                start_y,
                 start_width,
                 start_height,
                 edges,
@@ -433,11 +439,14 @@ impl Window {
                 let edges = *edges;
                 let mut new_width = *start_width;
                 let mut new_height = *start_height;
+                let mut new_x = *start_x;
+                let mut new_y = *start_y;
 
                 // Apply resize based on edges
                 if edges & 4 != 0 {
                     // Left edge
                     new_width = (*start_width - dx).max(self.min_width);
+                    new_x = *start_x + (*start_width - new_width);
                 }
                 if edges & 8 != 0 {
                     // Right edge
@@ -446,12 +455,16 @@ impl Window {
                 if edges & 1 != 0 {
                     // Top edge
                     new_height = (*start_height - dy).max(self.min_height);
+                    new_y = *start_y + (*start_height - new_height);
                 }
                 if edges & 2 != 0 {
                     // Bottom edge
                     new_height = (*start_height + dy).max(self.min_height);
                 }
 
+                if new_x != self.x || new_y != self.y {
+                    self.set_position(new_x, new_y);
+                }
                 self.propose_dimensions(new_width, new_height);
             }
             Operator::None => {}

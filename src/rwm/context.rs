@@ -752,6 +752,55 @@ impl Context {
         }
     }
 
+    /// Start move/resize based on pointer location within the window frame
+    pub fn handle_window_interaction(&mut self, seat_id: SeatId, window_id: WindowId) {
+        let seat = match self.seats.get(&seat_id) {
+            Some(seat) => seat.clone(),
+            None => return,
+        };
+        let window = match self.windows.get(&window_id) {
+            Some(window) => window.clone(),
+            None => return,
+        };
+
+        let (px, py) = {
+            let seat_ref = seat.borrow();
+            (seat_ref.pointer_x, seat_ref.pointer_y)
+        };
+
+        let (x, y, width, height, has_titlebar) = {
+            let w = window.borrow();
+            (w.x, w.y, w.width, w.height, w.titlebar.is_some())
+        };
+
+        let edges = calculate_resize_edges_near_border(
+            x,
+            y,
+            width,
+            height,
+            super::titlebar::BORDER_WIDTH,
+            px,
+            py,
+        );
+
+        if edges != 0 {
+            let mut w = window.borrow_mut();
+            w.floating = true;
+            w.start_resize(Rc::downgrade(&seat), edges);
+            seat.borrow().start_pointer_op();
+            return;
+        }
+
+        if has_titlebar
+            && point_in_titlebar(x, y, width, super::titlebar::TITLEBAR_HEIGHT, px, py)
+        {
+            let mut w = window.borrow_mut();
+            w.floating = true;
+            w.start_move(Rc::downgrade(&seat));
+            seat.borrow().start_pointer_op();
+        }
+    }
+
     /// Snap focused window to edge
     fn snap_focused_window(&mut self, edge: Edge) {
         let (output_x, output_y, output_w, output_h) = match self
@@ -1033,4 +1082,72 @@ fn calculate_resize_edges(window: &Window, px: i32, py: i32) -> u32 {
     }
 
     edges
+}
+
+fn calculate_resize_edges_near_border(
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    border: i32,
+    px: i32,
+    py: i32,
+) -> u32 {
+    if width <= 0 || height <= 0 || border <= 0 {
+        return 0;
+    }
+
+    let left_edge = x;
+    let right_edge = x + width;
+    let top_edge = y;
+    let bottom_edge = y + height;
+
+    let within_vert = py >= top_edge - border && py <= bottom_edge + border;
+    let within_horiz = px >= left_edge - border && px <= right_edge + border;
+
+    let dist_left = (px - left_edge).abs();
+    let dist_right = (px - right_edge).abs();
+    let dist_top = (py - top_edge).abs();
+    let dist_bottom = (py - bottom_edge).abs();
+
+    let mut edges = 0u32;
+
+    if within_vert {
+        let mut horiz = 0u32;
+        if dist_left <= border {
+            horiz = 4;
+        }
+        if dist_right <= border && (horiz == 0 || dist_right < dist_left) {
+            horiz = 8;
+        }
+        edges |= horiz;
+    }
+
+    if within_horiz {
+        let mut vert = 0u32;
+        if dist_top <= border {
+            vert = 1;
+        }
+        if dist_bottom <= border && (vert == 0 || dist_bottom < dist_top) {
+            vert = 2;
+        }
+        edges |= vert;
+    }
+
+    edges
+}
+
+fn point_in_titlebar(
+    x: i32,
+    y: i32,
+    width: i32,
+    titlebar_height: i32,
+    px: i32,
+    py: i32,
+) -> bool {
+    if width <= 0 || titlebar_height <= 0 {
+        return false;
+    }
+
+    px >= x && px <= x + width && py >= y && py <= y + titlebar_height
 }

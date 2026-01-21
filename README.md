@@ -36,9 +36,10 @@ RUST_LOG=info river -c ./target/release/rwm
 | Action | Result |
 |--------|--------|
 | Click on window | Focus window |
-| `Alt+Left Click` | Focus window |
-| `Alt+Left Drag` | Move window |
-| `Alt+Right Drag` | Resize window |
+| Drag titlebar | Move window |
+| Drag window edges | Resize window |
+| `Alt+Left Drag` | Move window (anywhere) |
+| `Alt+Right Drag` | Resize window (anywhere) |
 
 ## Features
 
@@ -46,7 +47,7 @@ RUST_LOG=info river -c ./target/release/rwm
 - Yellow window borders (10px)
 - Yellow titlebars (24px)
 - Server-side decorations
-- Alt+Drag window movement and resizing
+- Titlebar/edge window movement and resizing (Alt+Drag anywhere)
 - Window focus follows click
 
 ## Requirements

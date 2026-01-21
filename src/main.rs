@@ -559,7 +559,9 @@ impl Dispatch<RiverSeatV1, rwm::SeatId> for AppState {
                 }) {
                     drop(context);
                     log::debug!("Window interaction - focusing window {}", wid);
-                    state.context.borrow_mut().focus(wid);
+                    let mut context = state.context.borrow_mut();
+                    context.focus(wid);
+                    context.handle_window_interaction(*seat_id, wid);
                 }
             }
             Event::OpDelta { dx, dy } => {
