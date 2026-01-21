@@ -35,6 +35,8 @@ pub struct Output {
     pub width: i32,
     /// Height
     pub height: i32,
+    /// Output scale factor (integer)
+    pub scale: i32,
 
     /// Current visible tags
     pub tag: u32,
@@ -78,6 +80,7 @@ impl Output {
             y: 0,
             width: 0,
             height: 0,
+            scale: 1,
             tag: 1, // Default to tag 1
             main_tag: 1,
             prev_tag: 1,

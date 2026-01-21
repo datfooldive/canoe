@@ -151,10 +151,16 @@ pub struct Titlebar {
     pub width: i32,
     /// Current buffer height
     pub height: i32,
+    /// Current buffer width in pixels
+    pub buffer_width: i32,
+    /// Current buffer height in pixels
+    pub buffer_height: i32,
     /// Current content width
     pub content_width: i32,
     /// Current content height
     pub content_height: i32,
+    /// Output scale factor
+    pub scale: i32,
     /// Whether titlebar needs redraw
     pub dirty: bool,
 }
@@ -171,8 +177,11 @@ impl Titlebar {
             mmap: None,
             width: 0,
             height: 0,
+            buffer_width: 0,
+            buffer_height: 0,
             content_width: 0,
             content_height: 0,
+            scale: 1,
             dirty: true,
         }
     }
@@ -184,6 +193,7 @@ impl Titlebar {
         content_height: i32,
         shm: &wl_shm::WlShm,
         qh: &QueueHandle<D>,
+        scale: i32,
     ) where
         D: wayland_client::Dispatch<wl_shm_pool::WlShmPool, ()>
             + wayland_client::Dispatch<wl_buffer::WlBuffer, ()>,
@@ -193,11 +203,24 @@ impl Titlebar {
             return;
         }
 
+        let scale = scale.max(1);
         let width = content_width + BORDER_WIDTH * 2;
         let height = content_height + TITLEBAR_HEIGHT + BORDER_WIDTH * 2;
+        let buffer_width = width * scale;
+        let buffer_height = height * scale;
+        if buffer_width <= 0 || buffer_height <= 0 {
+            log::info!("ensure_buffer: invalid buffer size, skipping");
+            return;
+        }
 
         // Check if we need a new buffer
-        if self.width != width || self.height != height || self.buffer.is_none() {
+        if self.width != width
+            || self.height != height
+            || self.buffer_width != buffer_width
+            || self.buffer_height != buffer_height
+            || self.scale != scale
+            || self.buffer.is_none()
+        {
             log::info!(
                 "ensure_buffer: creating new buffer for {}x{} (content {}x{})",
                 width,
@@ -207,8 +230,11 @@ impl Titlebar {
             );
             self.width = width;
             self.height = height;
+            self.buffer_width = buffer_width;
+            self.buffer_height = buffer_height;
             self.content_width = content_width;
             self.content_height = content_height;
+            self.scale = scale;
             self.dirty = true;
 
             // Clean up old buffer
@@ -220,8 +246,8 @@ impl Titlebar {
             }
 
             // Calculate buffer size (ARGB8888 = 4 bytes per pixel)
-            let stride = width * 4;
-            let size = stride * height;
+            let stride = buffer_width * 4;
+            let size = stride * buffer_height;
             log::debug!("ensure_buffer: stride={}, size={}", stride, size);
 
             // Create memfd for shared memory
@@ -257,8 +283,8 @@ impl Titlebar {
             // Create buffer
             let buffer = pool.create_buffer(
                 0,
-                width,
-                height,
+                buffer_width,
+                buffer_height,
                 stride,
                 wl_shm::Format::Argb8888,
                 qh,
@@ -273,16 +299,27 @@ impl Titlebar {
             self.pool = Some(pool);
             self.buffer = Some(buffer);
         }
+
+        self.surface.set_buffer_scale(scale);
     }
 
     /// Render the titlebar with the given title and state
     pub fn render(&mut self, title: Option<&str>, is_active: bool, is_maximized: bool) {
         if let Some(ref mut mmap) = self.mmap {
+            let scale = self.scale.max(1);
             let width = self.width;
             let height = self.height;
+            let buffer_width = self.buffer_width;
+            let buffer_height = self.buffer_height;
             let content_width = self.content_width;
             let content_height = self.content_height;
-            if width <= 0 || height <= 0 || content_width <= 0 || content_height <= 0 {
+            if width <= 0
+                || height <= 0
+                || buffer_width <= 0
+                || buffer_height <= 0
+                || content_width <= 0
+                || content_height <= 0
+            {
                 return;
             }
 
@@ -292,26 +329,26 @@ impl Titlebar {
             let border_offset = 0;
             draw_border_layer(
                 pixels,
-                width,
-                height,
+                buffer_width,
+                buffer_height,
                 border_offset,
-                BORDER_OUTER,
+                BORDER_OUTER * scale,
                 BORDER_COLOR_OUTER,
             );
             draw_border_layer(
                 pixels,
-                width,
-                height,
-                border_offset + BORDER_OUTER,
-                BORDER_MID,
+                buffer_width,
+                buffer_height,
+                border_offset + BORDER_OUTER * scale,
+                BORDER_MID * scale,
                 BORDER_COLOR_MID,
             );
             draw_border_layer(
                 pixels,
-                width,
-                height,
-                border_offset + BORDER_OUTER + BORDER_MID,
-                BORDER_INNER,
+                buffer_width,
+                buffer_height,
+                border_offset + (BORDER_OUTER + BORDER_MID) * scale,
+                BORDER_INNER * scale,
                 BORDER_COLOR_INNER,
             );
 
@@ -329,12 +366,12 @@ impl Titlebar {
                 let title_y = BORDER_WIDTH;
                 fill_rect(
                     pixels,
-                    width,
-                    height,
-                    title_x,
-                    title_y,
-                    content_width,
-                    title_height,
+                    buffer_width,
+                    buffer_height,
+                    title_x * scale,
+                    title_y * scale,
+                    content_width * scale,
+                    title_height * scale,
                     bg_argb,
                 );
 
@@ -344,100 +381,100 @@ impl Titlebar {
 
                 fill_rect(
                     pixels,
-                    width,
-                    height,
-                    title_x + buttons.close.x,
-                    title_y + buttons.close.y,
-                    buttons.close.width,
-                    title_height,
+                    buffer_width,
+                    buffer_height,
+                    (title_x + buttons.close.x) * scale,
+                    (title_y + buttons.close.y) * scale,
+                    buttons.close.width * scale,
+                    title_height * scale,
                     button_bg,
                 );
                 draw_glyph_close(
                     pixels,
-                    width,
-                    height,
-                    title_x + buttons.close.x,
-                    title_y + buttons.close.y,
-                    buttons.close.width,
+                    buffer_width,
+                    buffer_height,
+                    (title_x + buttons.close.x) * scale,
+                    (title_y + buttons.close.y) * scale,
+                    buttons.close.width * scale,
                     button_border,
                 );
                 draw_left_border(
                     pixels,
-                    width,
-                    height,
-                    title_x + buttons.close.x + buttons.close.width,
-                    title_y,
-                    title_height,
+                    buffer_width,
+                    buffer_height,
+                    (title_x + buttons.close.x + buttons.close.width) * scale,
+                    title_y * scale,
+                    title_height * scale,
                     button_border,
                 );
 
                 draw_button_bevel(
                     pixels,
-                    width,
-                    height,
-                    title_x + buttons.hide.x,
-                    title_y + buttons.hide.y,
-                    buttons.hide.width,
+                    buffer_width,
+                    buffer_height,
+                    (title_x + buttons.hide.x) * scale,
+                    (title_y + buttons.hide.y) * scale,
+                    buttons.hide.width * scale,
                     button_bg,
                     button_border,
                 );
                 draw_left_border(
                     pixels,
-                    width,
-                    height,
-                    title_x + buttons.hide.x - 1,
-                    title_y,
-                    title_height,
+                    buffer_width,
+                    buffer_height,
+                    (title_x + buttons.hide.x - 1) * scale,
+                    title_y * scale,
+                    title_height * scale,
                     button_border,
                 );
                 draw_glyph_caret(
                     pixels,
-                    width,
-                    height,
-                    title_x + buttons.hide.x,
-                    title_y + buttons.hide.y,
-                    buttons.hide.width,
+                    buffer_width,
+                    buffer_height,
+                    (title_x + buttons.hide.x) * scale,
+                    (title_y + buttons.hide.y) * scale,
+                    buttons.hide.width * scale,
                     button_border,
                     true,
                 );
 
                 draw_button_bevel(
                     pixels,
-                    width,
-                    height,
-                    title_x + buttons.maximize.x,
-                    title_y + buttons.maximize.y,
-                    buttons.maximize.width,
+                    buffer_width,
+                    buffer_height,
+                    (title_x + buttons.maximize.x) * scale,
+                    (title_y + buttons.maximize.y) * scale,
+                    buttons.maximize.width * scale,
                     button_bg,
                     button_border,
                 );
                 draw_left_border(
                     pixels,
-                    width,
-                    height,
-                    title_x + buttons.maximize.x - 1,
-                    title_y,
-                    title_height,
+                    buffer_width,
+                    buffer_height,
+                    (title_x + buttons.maximize.x - 1) * scale,
+                    title_y * scale,
+                    title_height * scale,
                     button_border,
                 );
                 if is_maximized {
                     draw_glyph_caret_pair(
                         pixels,
-                        width,
-                        height,
-                        title_x + buttons.maximize.x,
-                        title_y + buttons.maximize.y,
-                        buttons.maximize.width,
+                        buffer_width,
+                        buffer_height,
+                        (title_x + buttons.maximize.x) * scale,
+                        (title_y + buttons.maximize.y) * scale,
+                        buttons.maximize.width * scale,
                         button_border,
                     );
                 } else {
                     draw_glyph_caret(
                         pixels,
-                        width,
-                        height,
-                        title_x + buttons.maximize.x,
-                        title_y + buttons.maximize.y,
-                        buttons.maximize.width,
+                        buffer_width,
+                        buffer_height,
+                        (title_x + buttons.maximize.x) * scale,
+                        (title_y + buttons.maximize.y) * scale,
+                        buttons.maximize.width * scale,
                         button_border,
                         false,
                     );
@@ -447,12 +484,12 @@ impl Titlebar {
                 if separator_y >= 0 && separator_y < height - BORDER_WIDTH {
                     fill_rect(
                         pixels,
-                        width,
-                        height,
-                        title_x,
-                        separator_y,
-                        content_width,
-                        1,
+                        buffer_width,
+                        buffer_height,
+                        title_x * scale,
+                        separator_y * scale,
+                        content_width * scale,
+                        scale,
                         rgba_to_argb(BORDER_COLOR_OUTER),
                     );
                 }
@@ -467,13 +504,14 @@ impl Titlebar {
                         if text_width > 0 {
                             render_title(
                                 pixels,
-                                width,
-                                height,
+                                buffer_width,
+                                buffer_height,
                                 title_str,
-                                title_x + text_start,
-                                title_y,
-                                text_width,
-                                title_height,
+                                (title_x + text_start) * scale,
+                                title_y * scale,
+                                text_width * scale,
+                                title_height * scale,
+                                scale,
                             );
                         }
                     }
@@ -488,7 +526,8 @@ impl Titlebar {
     pub fn commit(&self) {
         if let Some(ref buffer) = self.buffer {
             self.surface.attach(Some(buffer), 0, 0);
-            self.surface.damage_buffer(0, 0, self.width, self.height);
+            self.surface
+                .damage_buffer(0, 0, self.buffer_width, self.buffer_height);
             self.surface.commit();
         }
     }
@@ -540,6 +579,7 @@ fn render_title(
     origin_y: i32,
     area_width: i32,
     area_height: i32,
+    scale: i32,
 ) {
     let font = match get_font() {
         Some(f) => f,
@@ -547,24 +587,25 @@ fn render_title(
     };
 
     let text_argb = rgba_to_argb(TEXT_COLOR);
+    let font_size = FONT_SIZE * scale.max(1) as f32;
 
     // Calculate baseline for vertical centering across glyphs.
-    let baseline_y = if let Some(line_metrics) = font.horizontal_line_metrics(FONT_SIZE) {
+    let baseline_y = if let Some(line_metrics) = font.horizontal_line_metrics(font_size) {
         let line_height = line_metrics.ascent - line_metrics.descent;
         origin_y as f32 + (area_height as f32 - line_height) / 2.0 + line_metrics.ascent
     } else {
-        let metrics = font.metrics('A', FONT_SIZE);
+        let metrics = font.metrics('A', font_size);
         origin_y as f32
             + (area_height as f32 - metrics.height as f32) / 2.0
             + (metrics.ymin as f32 + metrics.height as f32)
     };
 
     // Rasterize and draw each character
-    let mut x_pos = (origin_x + TITLE_PADDING) as f32;
-    let max_x = origin_x + area_width - TITLE_PADDING;
+    let mut x_pos = (origin_x + TITLE_PADDING * scale.max(1)) as f32;
+    let max_x = origin_x + area_width - TITLE_PADDING * scale.max(1);
 
     for ch in title.chars() {
-        let (metrics, bitmap) = font.rasterize(ch, FONT_SIZE);
+        let (metrics, bitmap) = font.rasterize(ch, font_size);
 
         // Check if we have room for this character
         if (x_pos + metrics.advance_width) as i32 > max_x {
@@ -752,32 +793,51 @@ fn draw_button_bevel(
     bg_argb: u32,
     border_argb: u32,
 ) {
+    let unit = (size / TITLEBAR_HEIGHT).max(1);
     let light_argb = rgba_to_argb(BUTTON_LIGHT_EDGE);
     let shadow_argb = rgba_to_argb(BORDER_COLOR_MID);
 
     fill_rect(pixels, buffer_width, buffer_height, x, y, size, size, bg_argb);
-    fill_rect(pixels, buffer_width, buffer_height, x, y, size, 1, light_argb);
-    fill_rect(pixels, buffer_width, buffer_height, x, y, 1, size, light_argb);
+    fill_rect(
+        pixels,
+        buffer_width,
+        buffer_height,
+        x,
+        y,
+        size,
+        unit,
+        light_argb,
+    );
+    fill_rect(
+        pixels,
+        buffer_width,
+        buffer_height,
+        x,
+        y,
+        unit,
+        size,
+        light_argb,
+    );
 
-    if size >= 3 {
+    if size >= 3 * unit {
         fill_rect(
             pixels,
             buffer_width,
             buffer_height,
             x,
-            y + size - 2,
-            size - 1,
-            1,
+            y + size - 2 * unit,
+            size - unit,
+            unit,
             shadow_argb,
         );
         fill_rect(
             pixels,
             buffer_width,
             buffer_height,
-            x + size - 2,
-            y + 1,
-            1,
-            size - 2,
+            x + size - 2 * unit,
+            y + unit,
+            unit,
+            size - 2 * unit,
             shadow_argb,
         );
     }
@@ -787,19 +847,19 @@ fn draw_button_bevel(
         buffer_width,
         buffer_height,
         x,
-        y + size - 1,
-        size - 1,
-        1,
+        y + size - unit,
+        size - unit,
+        unit,
         shadow_argb,
     );
     fill_rect(
         pixels,
         buffer_width,
         buffer_height,
-        x + size - 1,
-        y + 1,
-        1,
-        size - 2,
+        x + size - unit,
+        y + unit,
+        unit,
+        size - 2 * unit,
         shadow_argb,
     );
 }
@@ -816,7 +876,17 @@ fn draw_left_border(
     if x < 0 {
         return;
     }
-    fill_rect(pixels, buffer_width, buffer_height, x, y, 1, height, color_argb);
+    let unit = (height / TITLEBAR_HEIGHT).max(1);
+    fill_rect(
+        pixels,
+        buffer_width,
+        buffer_height,
+        x,
+        y,
+        unit,
+        height,
+        color_argb,
+    );
 }
 
 fn draw_glyph_close(
@@ -828,10 +898,11 @@ fn draw_glyph_close(
     size: i32,
     color_argb: u32,
 ) {
-    let inner_size = (size - 2).max(1);
-    let line_y = y + 1 + (inner_size - 1) / 2;
-    let line_x = x + 6;
-    let line_w = size - 12;
+    let unit = (size / TITLEBAR_HEIGHT).max(1);
+    let inner_size = (size - 2 * unit).max(1);
+    let line_y = y + unit + (inner_size - unit) / 2;
+    let line_x = x + 6 * unit;
+    let line_w = size - 12 * unit;
     if line_w > 0 {
         fill_rect(
             pixels,
@@ -840,7 +911,7 @@ fn draw_glyph_close(
             line_x,
             line_y,
             line_w,
-            1,
+            unit,
             color_argb,
         );
     }
@@ -856,20 +927,22 @@ fn draw_glyph_caret(
     color_argb: u32,
     down: bool,
 ) {
-    let span = (size / 4).max(2);
+    let unit = (size / TITLEBAR_HEIGHT).max(1);
+    let span = (TITLEBAR_HEIGHT / 4).max(2);
     let glyph_height = span * 2 + 1;
-    let inner_size = (size - 2).max(1);
-    let top_y = y + 1 + (inner_size - glyph_height) / 2 + 4;
+    let glyph_height_px = glyph_height * unit;
+    let inner_size = (size - 2 * unit).max(1);
+    let top_y = y + unit + (inner_size - glyph_height_px) / 2 + 4 * unit;
     let mid_x = x + size / 2;
 
     for i in 0..=span {
-        let row = top_y + i;
+        let row = top_y + i * unit;
         let (start, width) = if down {
-            let w = 1 + (span - i) * 2;
-            (mid_x - (span - i), w)
+            let w = unit + (span - i) * 2 * unit;
+            (mid_x - (span - i) * unit, w)
         } else {
-            let w = 1 + i * 2;
-            (mid_x - i, w)
+            let w = unit + i * 2 * unit;
+            (mid_x - i * unit, w)
         };
         fill_rect(
             pixels,
@@ -878,7 +951,7 @@ fn draw_glyph_caret(
             start,
             row,
             width,
-            1,
+            unit,
             color_argb,
         );
     }
@@ -893,18 +966,20 @@ fn draw_glyph_caret_pair(
     size: i32,
     color_argb: u32,
 ) {
-    let span = (size / 4).max(2);
+    let unit = (size / TITLEBAR_HEIGHT).max(1);
+    let span = (TITLEBAR_HEIGHT / 4).max(2);
     let glyph_height = span * 2 + 1;
-    let inner_size = (size - 2).max(1);
-    let gap = 1;
-    let total_height = glyph_height * 2 + gap;
-    let top_y = y + 1 + (inner_size - total_height) / 2 + 5;
+    let glyph_height_px = glyph_height * unit;
+    let inner_size = (size - 2 * unit).max(1);
+    let gap = unit;
+    let total_height = glyph_height_px * 2 + gap;
+    let top_y = y + unit + (inner_size - total_height) / 2 + 5 * unit;
     let mid_x = x + size / 2;
 
     for i in 0..=span {
-        let row = top_y + i;
-        let width = 1 + i * 2;
-        let start = mid_x - i;
+        let row = top_y + i * unit;
+        let width = unit + i * 2 * unit;
+        let start = mid_x - i * unit;
         fill_rect(
             pixels,
             buffer_width,
@@ -912,16 +987,16 @@ fn draw_glyph_caret_pair(
             start,
             row,
             width,
-            1,
+            unit,
             color_argb,
         );
     }
 
-    let down_top = top_y + glyph_height + gap - 5;
+    let down_top = top_y + glyph_height_px + gap - 5 * unit;
     for i in 0..=span {
-        let row = down_top + i;
-        let width = 1 + (span - i) * 2;
-        let start = mid_x - (span - i);
+        let row = down_top + i * unit;
+        let width = unit + (span - i) * 2 * unit;
+        let start = mid_x - (span - i) * unit;
         fill_rect(
             pixels,
             buffer_width,
@@ -929,7 +1004,7 @@ fn draw_glyph_caret_pair(
             start,
             row,
             width,
-            1,
+            unit,
             color_argb,
         );
     }

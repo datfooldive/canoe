@@ -51,6 +51,7 @@ struct Globals {
     cursor_shape_manager: Option<WpCursorShapeManagerV1>,
     wl_seats: HashMap<u32, wl_seat::WlSeat>,
     wl_outputs: HashMap<u32, wl_output::WlOutput>,
+    wl_output_scales: HashMap<u32, i32>,
 }
 
 fn attach_wl_seat(
@@ -108,11 +109,21 @@ fn render_window_menu(state: &mut AppState, qh: &QueueHandle<AppState>) {
     };
 
     let mut context = state.context.borrow_mut();
+    let scale = context
+        .window_menu
+        .as_ref()
+        .and_then(|menu| {
+            context
+                .outputs
+                .get(&menu.output_id)
+                .map(|output| output.borrow().scale)
+        })
+        .unwrap_or(1);
     if let Some(menu) = context.window_menu.as_mut() {
         if !menu.configured {
             return;
         }
-        menu.ensure_buffer(shm, qh);
+        menu.ensure_buffer(shm, qh, scale);
         menu.render();
         menu.update_input_region(compositor, qh);
         menu.commit();
@@ -485,6 +496,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
                 "wl_output" => {
                     let output: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ());
                     state.globals.wl_outputs.insert(name, output);
+                    state.globals.wl_output_scales.entry(name).or_insert(1);
                 }
                 "wl_seat" => {
                     log::info!("Binding wl_seat v{}", version.min(7));
@@ -624,12 +636,18 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                         let height = w.height;
 
                         // Update titlebar if it exists and window has valid dimensions
+                        let scale = w
+                            .output
+                            .as_ref()
+                            .and_then(|o| o.upgrade())
+                            .map(|o| o.borrow().scale)
+                            .unwrap_or(1);
                         if let Some(ref mut titlebar) = w.titlebar {
                             log::info!("Window {} titlebar: width={}, has_buffer={}",
                                 window_id, width, titlebar.buffer.is_some());
                             if width > 0 && height > 0 {
                                 // Ensure buffer is allocated
-                                titlebar.ensure_buffer(width, height, shm, qh);
+                                titlebar.ensure_buffer(width, height, shm, qh, scale);
                                 if let Some(ref compositor) = state.globals.compositor {
                                     titlebar.update_input_region(compositor, qh);
                                 }
@@ -973,6 +991,12 @@ impl Dispatch<RiverOutputV1, rwm::OutputId> for AppState {
                 let mut out = output.borrow_mut();
                 out.wl_output_name = name;
                 out.wl_output = state.globals.wl_outputs.get(&name).cloned();
+                out.scale = state
+                    .globals
+                    .wl_output_scales
+                    .get(&name)
+                    .copied()
+                    .unwrap_or(1);
                 drop(out);
                 ensure_desktop_surface(state, *output_id, qh);
             }
@@ -1782,7 +1806,42 @@ impl Dispatch<wl_output::WlOutput, ()> for AppState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        // Output events are not needed for WM surfaces.
+        match _event {
+            wl_output::Event::Scale { factor } => {
+                let scale = factor.max(1);
+                let output_name = _state
+                    .globals
+                    .wl_outputs
+                    .iter()
+                    .find_map(|(name, output)| if output == _proxy { Some(*name) } else { None });
+                if let Some(name) = output_name {
+                    _state.globals.wl_output_scales.insert(name, scale);
+                }
+                let outputs = {
+                    let context = _state.context.borrow();
+                    context
+                        .outputs
+                        .values()
+                        .filter(|output| {
+                            let out = output.borrow();
+                            if let Some(name) = output_name {
+                                out.wl_output_name == name
+                            } else {
+                                out.wl_output
+                                    .as_ref()
+                                    .map(|o| o == _proxy)
+                                    .unwrap_or(false)
+                            }
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>()
+                };
+                for output in outputs {
+                    output.borrow_mut().scale = scale;
+                }
+            }
+            _ => {}
+        }
     }
 }
 

@@ -32,6 +32,9 @@ pub struct WindowMenu {
     pub mmap: Option<MmapMut>,
     pub width: i32,
     pub height: i32,
+    pub buffer_width: i32,
+    pub buffer_height: i32,
+    pub scale: i32,
     pub configured: bool,
     pub items: Vec<MenuItem>,
     pub hovered: Option<usize>,
@@ -75,6 +78,9 @@ impl WindowMenu {
             mmap: None,
             width,
             height,
+            buffer_width: width,
+            buffer_height: height,
+            scale: 1,
             configured: false,
             items,
             hovered: None,
@@ -138,7 +144,12 @@ impl WindowMenu {
         false
     }
 
-    pub fn ensure_buffer<D: 'static>(&mut self, shm: &wl_shm::WlShm, qh: &QueueHandle<D>)
+    pub fn ensure_buffer<D: 'static>(
+        &mut self,
+        shm: &wl_shm::WlShm,
+        qh: &QueueHandle<D>,
+        scale: i32,
+    )
     where
         D: wayland_client::Dispatch<wl_shm_pool::WlShmPool, ()>
             + wayland_client::Dispatch<wl_buffer::WlBuffer, ()>,
@@ -147,12 +158,25 @@ impl WindowMenu {
             return;
         }
 
-        if self.buffer.is_some() {
+        let scale = scale.max(1);
+        let buffer_width = self.width * scale;
+        let buffer_height = self.height * scale;
+        if buffer_width <= 0 || buffer_height <= 0 {
             return;
         }
 
-        let stride = self.width * 4;
-        let size = stride * self.height;
+        if self.buffer.is_some()
+            && self.buffer_width == buffer_width
+            && self.buffer_height == buffer_height
+            && self.scale == scale
+        {
+            return;
+        }
+
+        self.surface.set_buffer_scale(scale);
+
+        let stride = buffer_width * 4;
+        let size = stride * buffer_height;
         let memfd = match memfd::MemfdOptions::default()
             .close_on_exec(true)
             .create("rwm-menu")
@@ -180,8 +204,8 @@ impl WindowMenu {
         let pool = shm.create_pool(memfd.as_file().as_fd(), size, qh, ());
         let buffer = pool.create_buffer(
             0,
-            self.width,
-            self.height,
+            buffer_width,
+            buffer_height,
             stride,
             wl_shm::Format::Argb8888,
             qh,
@@ -192,6 +216,9 @@ impl WindowMenu {
         self.mmap = Some(mmap);
         self.pool = Some(pool);
         self.buffer = Some(buffer);
+        self.buffer_width = buffer_width;
+        self.buffer_height = buffer_height;
+        self.scale = scale;
     }
 
     pub fn reset_buffer(&mut self) {
@@ -216,37 +243,41 @@ impl WindowMenu {
             return;
         };
 
+        let scale = self.scale.max(1);
+        let menu_w_px = menu_w * scale;
+        let menu_h_px = menu_h * scale;
+
         let pixels = mmap.as_mut();
         clear_buffer(pixels);
 
         draw_shadow(
             pixels,
-            self.width,
-            self.height,
-            menu_w,
-            menu_h,
+            self.buffer_width,
+            self.buffer_height,
+            menu_w_px,
+            menu_h_px,
             rgba_to_argb(SHADOW_COLOR),
         );
 
         fill_rect(
             pixels,
-            self.width,
-            self.height,
+            self.buffer_width,
+            self.buffer_height,
             0,
             0,
-            menu_w,
-            menu_h,
+            menu_w_px,
+            menu_h_px,
             rgba_to_argb(BG_COLOR_MENU),
         );
 
         draw_border_rect(
             pixels,
-            self.width,
-            self.height,
+            self.buffer_width,
+            self.buffer_height,
             0,
             0,
-            menu_w,
-            menu_h,
+            menu_w_px,
+            menu_h_px,
             rgba_to_argb(BORDER_COLOR),
         );
 
@@ -274,42 +305,52 @@ impl WindowMenu {
                 rgba_to_argb(TEXT_COLOR_NORMAL)
             };
 
-            fill_rect(pixels, self.width, self.height, MENU_BORDER, y, menu_w - MENU_BORDER * 2, item_h, bg);
+            fill_rect(
+                pixels,
+                self.buffer_width,
+                self.buffer_height,
+                MENU_BORDER * scale,
+                y * scale,
+                (menu_w - MENU_BORDER * 2) * scale,
+                item_h * scale,
+                bg,
+            );
 
             if item.hidden {
                 draw_dashed_rect(
                     pixels,
-                    self.width,
-                    self.height,
-                    start_x,
-                    y + (item_h - ICON_SIZE) / 2,
-                    ICON_SIZE,
-                    ICON_SIZE,
+                    self.buffer_width,
+                    self.buffer_height,
+                    start_x * scale,
+                    (y + (item_h - ICON_SIZE) / 2) * scale,
+                    ICON_SIZE * scale,
+                    ICON_SIZE * scale,
                     icon_color,
                 );
             }
             if item.active {
                 draw_diamond(
                     pixels,
-                    self.width,
-                    self.height,
-                    start_x + (ICON_SIZE - ACTIVE_DIAMOND_SIZE) / 2,
-                    y + (item_h - ACTIVE_DIAMOND_SIZE) / 2,
-                    ACTIVE_DIAMOND_SIZE,
+                    self.buffer_width,
+                    self.buffer_height,
+                    (start_x + (ICON_SIZE - ACTIVE_DIAMOND_SIZE) / 2) * scale,
+                    (y + (item_h - ACTIVE_DIAMOND_SIZE) / 2) * scale,
+                    ACTIVE_DIAMOND_SIZE * scale,
                     text_color,
                 );
             }
 
             render_text(
                 pixels,
-                self.width,
-                self.height,
+                self.buffer_width,
+                self.buffer_height,
                 &item.title,
-                text_start_x,
-                y,
-                text_area_w,
-                item_h,
+                text_start_x * scale,
+                y * scale,
+                text_area_w * scale,
+                item_h * scale,
                 text_color,
+                scale,
             );
 
             y += item_h;
@@ -338,7 +379,8 @@ impl WindowMenu {
     pub fn commit(&self) {
         if let Some(ref buffer) = self.buffer {
             self.surface.attach(Some(buffer), 0, 0);
-            self.surface.damage_buffer(0, 0, self.width, self.height);
+            self.surface
+                .damage_buffer(0, 0, self.buffer_width, self.buffer_height);
             self.surface.commit();
         }
     }
@@ -444,17 +486,19 @@ fn render_text(
     area_width: i32,
     area_height: i32,
     text_argb: u32,
+    scale: i32,
 ) {
     let font = match get_font() {
         Some(f) => f,
         None => return,
     };
 
-    let baseline_y = if let Some(line_metrics) = font.horizontal_line_metrics(FONT_SIZE) {
+    let font_size = FONT_SIZE * scale.max(1) as f32;
+    let baseline_y = if let Some(line_metrics) = font.horizontal_line_metrics(font_size) {
         let line_height = line_metrics.ascent - line_metrics.descent;
         origin_y as f32 + (area_height as f32 - line_height) / 2.0 + line_metrics.ascent
     } else {
-        let metrics = font.metrics('A', FONT_SIZE);
+        let metrics = font.metrics('A', font_size);
         origin_y as f32
             + (area_height as f32 - metrics.height as f32) / 2.0
             + (metrics.ymin as f32 + metrics.height as f32)
@@ -464,7 +508,7 @@ fn render_text(
     let max_x = origin_x + area_width;
 
     for ch in text.chars() {
-        let (metrics, bitmap) = font.rasterize(ch, FONT_SIZE);
+        let (metrics, bitmap) = font.rasterize(ch, font_size);
         if (x_pos + metrics.advance_width) as i32 > max_x {
             break;
         }
