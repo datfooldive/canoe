@@ -49,6 +49,7 @@ pub struct Context {
     // Runtime state
     pub running: bool,
     pub session_locked: bool,
+    startup_unminimize_done: bool,
 
     // Terminal windows for swallowing
     pub terminal_windows: HashMap<i32, WindowId>, // pid -> window_id
@@ -82,6 +83,7 @@ impl Context {
 
             running: true,
             session_locked: false,
+            startup_unminimize_done: false,
 
             terminal_windows: HashMap::new(),
         }
@@ -968,12 +970,25 @@ impl Context {
                     // We must call propose_dimensions for windows to be displayed.
                     // The protocol says (0,0) means "let window decide" but that
                     // gives us the window's minimum size (often tiny).
-                    // Use a reasonable default that most windows will fit into.
-                    // The window will respond with its actual dimensions.
-                    let default_width = 800;
-                    let default_height = 600;
-                    log::info!("Window {} init - proposing default dimensions {}x{}",
-                        window_id, default_width, default_height);
+                    let (default_width, default_height) = w
+                        .output
+                        .as_ref()
+                        .and_then(|output| output.upgrade())
+                        .map(|output| {
+                            let (_, _, width, height) = output.borrow().usable_area();
+                            if width > 0 && height > 0 {
+                                (width / 2, height / 2)
+                            } else {
+                                (800, 600)
+                            }
+                        })
+                        .unwrap_or((800, 600));
+                    log::info!(
+                        "Window {} init - proposing default dimensions {}x{}",
+                        window_id,
+                        default_width,
+                        default_height
+                    );
                     w.propose_dimensions(default_width, default_height);
                 }
 
@@ -1022,18 +1037,31 @@ impl Context {
         log::info!("render_start: {} windows, {} outputs, current_output={:?}, border_width={}",
             self.windows.len(), self.outputs.len(), self.current_output, border_width);
 
+        self.apply_initial_positions();
+        let unminimize_all = !self.startup_unminimize_done;
+        if unminimize_all {
+            for window in self.windows.values() {
+                window.borrow_mut().show();
+            }
+            self.startup_unminimize_done = true;
+        }
+
         // Process each window
         for (window_id, window) in &self.windows {
             let mut w = window.borrow_mut();
 
             // Check if window should be visible
-            let visible = self.current_output.and_then(|oid| {
-                self.outputs.get(&oid).map(|o| w.is_visible_on(&o.borrow()))
-            }).unwrap_or(false);
+            let mut visible = self
+                .current_output
+                .and_then(|oid| self.outputs.get(&oid).map(|o| w.is_visible_on(&o.borrow())))
+                .unwrap_or(false);
+            if unminimize_all {
+                visible = true;
+            }
 
             log::info!("Window {} visible={} hidden={} tag={}", window_id, visible, w.hidden, w.tag);
 
-            if visible && !w.hidden {
+            if visible {
                 w.show();
 
                 // Disable compositor borders; custom decoration handles borders.
@@ -1047,6 +1075,88 @@ impl Context {
                 }
             } else {
                 w.hide();
+            }
+        }
+    }
+
+    fn apply_initial_positions(&mut self) {
+        let mut output_windows: HashMap<OutputId, Vec<WindowId>> = HashMap::new();
+
+        for (&window_id, window) in &self.windows {
+            let w = window.borrow();
+            if !w.position_undefined {
+                continue;
+            }
+
+            let output_id = w
+                .output
+                .as_ref()
+                .and_then(|output| output.upgrade())
+                .map(|output| output.borrow().id)
+                .or(self.current_output);
+
+            let output_id = match output_id {
+                Some(output_id) => output_id,
+                None => continue,
+            };
+
+            let output = match self.outputs.get(&output_id) {
+                Some(output) => output.clone(),
+                None => continue,
+            };
+
+            if !w.is_visible_on(&output.borrow()) {
+                continue;
+            }
+
+            output_windows.entry(output_id).or_default().push(window_id);
+        }
+
+        for (output_id, mut window_ids) in output_windows {
+            window_ids.sort_unstable();
+
+            let output = match self.outputs.get(&output_id) {
+                Some(output) => output.clone(),
+                None => continue,
+            };
+
+            let (area_x, area_y, area_w, area_h) = output.borrow().usable_area();
+            if area_w <= 0 || area_h <= 0 {
+                continue;
+            }
+
+            let target_w = (area_w / 2).max(1);
+            let target_h = (area_h / 2).max(1);
+            let pad_x = 10 + super::titlebar::BORDER_WIDTH;
+            let pad_y = 10 + super::titlebar::BORDER_WIDTH + super::titlebar::TITLEBAR_HEIGHT;
+            let start_x = area_x + pad_x;
+            let start_y = area_y + pad_y;
+            let mut end_x = area_x + area_w - target_w - pad_x;
+            let mut end_y = area_y + area_h - target_h - pad_y;
+
+            if end_x < start_x {
+                end_x = start_x;
+            }
+            if end_y < start_y {
+                end_y = start_y;
+            }
+
+            let denom = (window_ids.len().saturating_sub(1)) as i32;
+            for (idx, window_id) in window_ids.iter().enumerate() {
+                let x = if denom == 0 {
+                    start_x
+                } else {
+                    start_x + (end_x - start_x) * idx as i32 / denom
+                };
+                let y = if denom == 0 {
+                    start_y
+                } else {
+                    start_y + (end_y - start_y) * idx as i32 / denom
+                };
+
+                if let Some(window) = self.windows.get(window_id) {
+                    window.borrow_mut().set_position(x, y);
+                }
             }
         }
     }
