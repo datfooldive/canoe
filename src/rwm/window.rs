@@ -62,6 +62,7 @@ pub enum WindowEvent {
     Unfullscreen,
     Maximize,
     Unmaximize,
+    Minimize,
     Move(Weak<RefCell<super::Seat>>),
     Resize(Weak<RefCell<super::Seat>>, u32), // seat, edges
 }
@@ -189,6 +190,10 @@ impl Window {
 
     /// Check if window is visible on the given output
     pub fn is_visible_on(&self, output: &super::Output) -> bool {
+        if self.hidden {
+            return false;
+        }
+
         // Check if window has the same output
         if let Some(ref win_output) = self.output {
             if let Some(win_output) = win_output.upgrade() {

@@ -906,8 +906,60 @@ impl Context {
     }
 
     fn hide_window(&mut self, window_id: WindowId) {
+        let was_focused = self.focused_window == Some(window_id);
         if let Some(window) = self.windows.get(&window_id) {
             window.borrow_mut().hide();
+        }
+        if !was_focused {
+            return;
+        }
+
+        let output = self
+            .current_output
+            .and_then(|id| self.outputs.get(&id).cloned())
+            .or_else(|| {
+                self.windows
+                    .get(&window_id)
+                    .and_then(|w| w.borrow().output.as_ref().and_then(|o| o.upgrade()))
+            });
+
+        let Some(output) = output else {
+            self.focused_window = None;
+            if let Some(seat_id) = self.current_seat {
+                if let Some(seat) = self.seats.get(&seat_id) {
+                    seat.borrow().clear_focus();
+                }
+            }
+            return;
+        };
+
+        let output_ref = output.borrow();
+        let visible: Vec<WindowId> = self
+            .windows
+            .iter()
+            .filter(|(_, w)| w.borrow().is_visible_on(&output_ref))
+            .map(|(&id, _)| id)
+            .collect();
+
+        if visible.is_empty() {
+            self.focused_window = None;
+            if let Some(seat_id) = self.current_seat {
+                if let Some(seat) = self.seats.get(&seat_id) {
+                    seat.borrow().clear_focus();
+                }
+            }
+            return;
+        }
+
+        if let Some(next_id) = self
+            .focus_stack
+            .iter()
+            .copied()
+            .find(|id| visible.contains(id))
+        {
+            self.focus(next_id);
+        } else {
+            self.focus(visible[0]);
         }
     }
 
@@ -1117,6 +1169,9 @@ impl Context {
                 if let Some(window) = self.windows.get(&window_id) {
                     window.borrow_mut().exit_fullscreen();
                 }
+            }
+            WindowEvent::Minimize => {
+                self.hide_window(window_id);
             }
             WindowEvent::Move(seat) => {
                 if let Some(seat) = seat.upgrade() {

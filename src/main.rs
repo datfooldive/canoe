@@ -537,6 +537,9 @@ impl Dispatch<RiverWindowV1, rwm::WindowId> for AppState {
             Event::UnmaximizeRequested => {
                 window.borrow_mut().queue_event(rwm::WindowEvent::Unmaximize);
             }
+            Event::MinimizeRequested => {
+                window.borrow_mut().queue_event(rwm::WindowEvent::Minimize);
+            }
             _ => {}
         }
     }
