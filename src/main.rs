@@ -1122,7 +1122,8 @@ impl Dispatch<ZwlrLayerSurfaceV1, rwm::LayerSurfaceKind> for AppState {
                             (state.globals.shm.as_ref(), state.globals.compositor.as_ref())
                         {
                             desktop.ensure_buffer(shm, qh);
-                            desktop.render();
+                            let bg_color = state.context.borrow().config.desktop_background;
+                            desktop.render(bg_color);
                             desktop.update_input_region(compositor, qh);
                             desktop.commit();
                         }

@@ -114,10 +114,12 @@ impl DesktopSurface {
         self.buffer = Some(buffer);
     }
 
-    pub fn render(&mut self) {
+    pub fn render(&mut self, rgba: u32) {
         if let Some(ref mut mmap) = self.mmap {
+            let argb = rgba_to_argb(rgba);
+            let color_bytes = argb.to_ne_bytes();
             for chunk in mmap.as_mut().chunks_exact_mut(4) {
-                chunk.copy_from_slice(&[0, 0, 0, 0]);
+                chunk.copy_from_slice(&color_bytes);
             }
         }
     }
@@ -146,6 +148,14 @@ impl DesktopSurface {
             self.surface.commit();
         }
     }
+}
+
+fn rgba_to_argb(rgba: u32) -> u32 {
+    let r = (rgba >> 24) & 0xff;
+    let g = (rgba >> 16) & 0xff;
+    let b = (rgba >> 8) & 0xff;
+    let a = rgba & 0xff;
+    (a << 24) | (r << 16) | (g << 8) | b
 }
 
 impl Drop for DesktopSurface {

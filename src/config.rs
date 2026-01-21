@@ -269,6 +269,7 @@ pub struct Config {
     pub bar: BarConfig,
     pub default_window_decoration: WindowDecoration,
     pub border_color: BorderColor,
+    pub desktop_background: u32,
 
     pub default_layout: LayoutType,
     pub tags: Vec<String>,
@@ -291,6 +292,7 @@ impl Default for Config {
             bar: BarConfig::default(),
             default_window_decoration: WindowDecoration::Ssd,
             border_color: BorderColor::default(),
+            desktop_background: 0x008080FF,
 
             default_layout: LayoutType::Tile,
             tags: (1..=9).map(|i| i.to_string()).collect(),
