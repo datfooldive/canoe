@@ -184,6 +184,8 @@ fn open_window_menu(
             }
         }
     }
+    menu.origin_x = local_x;
+    menu.origin_y = local_y;
 
     menu.layer_surface.set_anchor(
         wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Top
@@ -260,6 +262,85 @@ fn ensure_window_menu_shield(
         Some(rwm::ShieldSurface::new(surface, layer_surface, output_id));
 }
 
+fn request_manage_dirty(state: &AppState) {
+    if let Some(ref rwm) = state.context.borrow().rwm {
+        rwm.manage_dirty();
+    }
+}
+
+fn update_menu_hover_from_global(
+    state: &mut AppState,
+    seat_id: rwm::SeatId,
+    qh: &QueueHandle<AppState>,
+) {
+    let (px, py) = {
+        let context = state.context.borrow();
+        let Some(seat) = context.seats.get(&seat_id) else {
+            return;
+        };
+        let seat_ref = seat.borrow();
+        (seat_ref.pointer_x, seat_ref.pointer_y)
+    };
+
+    let changed = {
+        let mut context = state.context.borrow_mut();
+        if context.window_menu_mode != Some(rwm::WindowMenuMode::Pointer) {
+            return;
+        }
+        let (output_id, origin_x, origin_y) = {
+            let Some(menu) = context.window_menu.as_ref() else {
+                return;
+            };
+            (menu.output_id, menu.origin_x, menu.origin_y)
+        };
+        let (local_x, local_y) = {
+            let Some(output) = context.outputs.get(&output_id) else {
+                return;
+            };
+            let out = output.borrow();
+            let local_px = px - out.x;
+            let local_py = py - out.y;
+            (local_px - origin_x, local_py - origin_y)
+        };
+        let Some(menu) = context.window_menu.as_mut() else {
+            return;
+        };
+        menu.update_hover(local_x, local_y)
+    };
+
+    if changed {
+        render_window_menu(state, qh);
+    }
+}
+
+fn update_menu_hover_from_surface(
+    state: &mut AppState,
+    output_id: rwm::OutputId,
+    surface_x: f64,
+    surface_y: f64,
+    qh: &QueueHandle<AppState>,
+) {
+    let changed = {
+        let mut context = state.context.borrow_mut();
+        if context.window_menu_mode != Some(rwm::WindowMenuMode::Pointer) {
+            return;
+        }
+        let Some(menu) = context.window_menu.as_mut() else {
+            return;
+        };
+        if menu.output_id != output_id {
+            return;
+        }
+        let local_x = surface_x.round() as i32 - menu.origin_x;
+        let local_y = surface_y.round() as i32 - menu.origin_y;
+        menu.update_hover(local_x, local_y)
+    };
+
+    if changed {
+        render_window_menu(state, qh);
+    }
+}
+
 fn handle_window_menu_cycle(state: &mut AppState, qh: &QueueHandle<AppState>) {
     let mut should_render = false;
     let mut open_new = false;
@@ -315,15 +396,12 @@ fn handle_window_menu_cycle(state: &mut AppState, qh: &QueueHandle<AppState>) {
     ensure_window_menu_shield(state, output_id, qh);
 }
 
-fn handle_window_menu_commit(state: &mut AppState) {
-    let mut context = state.context.borrow_mut();
-    if context.window_menu_mode == Some(rwm::WindowMenuMode::AltTab) {
-        if context.window_menu.as_ref().and_then(|menu| menu.hovered).is_some() {
-            context.activate_menu_hovered();
-        } else {
-            context.close_window_menu();
-        }
-    }
+fn handle_window_menu_commit(state: &mut AppState, seat_id: rwm::SeatId) {
+    let Some(seat) = state.context.borrow().seats.get(&seat_id).cloned() else {
+        return;
+    };
+    seat.borrow_mut()
+        .queue_action(binding::Action::WindowMenuCommit);
 }
 
 fn ensure_desktop_surface(
@@ -1000,6 +1078,7 @@ impl Dispatch<RiverSeatV1, rwm::SeatId> for AppState {
             Event::PointerPosition { x, y } => {
                 seat.borrow_mut().update_pointer_position(x, y);
                 state.context.borrow_mut().update_cursor_for_seat(*seat_id);
+                update_menu_hover_from_global(state, *seat_id, qh);
             }
             _ => {}
         }
@@ -1232,19 +1311,19 @@ impl Dispatch<RiverXkbBindingV1, (rwm::SeatId, usize)> for AppState {
                     }
                 }
             }
-            Event::Released => {
-                if !enabled || binding_event != binding::BindingEvent::Released {
-                    return;
-                }
-                match action {
-                    binding::Action::WindowMenuCommit => {
-                        handle_window_menu_commit(state);
+                    Event::Released => {
+                        if !enabled || binding_event != binding::BindingEvent::Released {
+                            return;
+                        }
+                        match action {
+                            binding::Action::WindowMenuCommit => {
+                                handle_window_menu_commit(state, *seat_id);
+                            }
+                            _ => {
+                                seat.borrow_mut().queue_action(action);
+                            }
+                        }
                     }
-                    _ => {
-                        seat.borrow_mut().queue_action(action);
-                    }
-                }
-            }
         }
     }
 }
@@ -1473,7 +1552,7 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                         let mut context = state.context.borrow_mut();
                         if let Some(shield) = context.window_menu_shield.as_ref() {
                             if shield.surface == surface {
-                                target = rwm::PointerTarget::MenuShield;
+                                target = rwm::PointerTarget::MenuShield(shield.output_id);
                             }
                         }
                         if let Some(menu) = context.window_menu.as_mut() {
@@ -1510,7 +1589,7 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                         seat_ref.last_surface_x = surface_pos.0;
                         seat_ref.last_surface_y = surface_pos.1;
                     }
-                    if target == rwm::PointerTarget::MenuShield {
+                    if matches!(target, rwm::PointerTarget::MenuShield(_)) {
                         if let Some(pointer) = wl_pointer.as_ref() {
                             pointer.set_cursor(serial, None, 0, 0);
                         }
@@ -1530,7 +1609,8 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                         seat_ref.last_surface_x = surface_x.round() as i32;
                         seat_ref.last_surface_y = surface_y.round() as i32;
                     }
-                    if seat.borrow().pointer_target == rwm::PointerTarget::Menu {
+                    let target = seat.borrow().pointer_target;
+                    if target == rwm::PointerTarget::Menu {
                         let changed = state
                             .context
                             .borrow_mut()
@@ -1538,55 +1618,94 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                         if changed {
                             render_window_menu(state, _qh);
                         }
+                    } else if let rwm::PointerTarget::Desktop(output_id)
+                    | rwm::PointerTarget::MenuShield(output_id) = target
+                    {
+                        update_menu_hover_from_surface(state, output_id, surface_x, surface_y, _qh);
                     }
                 }
                 wl_pointer::Event::Button { button, state: btn_state, .. } => {
-                    if btn_state
-                        != wayland_client::WEnum::Value(wl_pointer::ButtonState::Pressed)
-                    {
-                        return;
-                    }
                     let target = seat.borrow().pointer_target;
-                    if target == rwm::PointerTarget::MenuShield {
+                    if matches!(target, rwm::PointerTarget::MenuShield(_)) {
                         return;
                     }
-                    if target != rwm::PointerTarget::Menu {
-                        let mut context = state.context.borrow_mut();
-                        if context.window_menu.is_some() {
-                            context.close_window_menu();
-                            return;
-                        }
-                    }
-                    match target {
-                        rwm::PointerTarget::Desktop(output_id) => {
-                            if button == crate::config::button::RIGHT {
-                                let (px, py) = {
-                                    let seat_ref = seat.borrow();
-                                    (seat_ref.last_surface_x, seat_ref.last_surface_y)
-                                };
+                    match btn_state {
+                        wayland_client::WEnum::Value(wl_pointer::ButtonState::Pressed) => {
+                            if target != rwm::PointerTarget::Menu {
                                 let mut context = state.context.borrow_mut();
                                 if context.window_menu.is_some() {
                                     context.close_window_menu();
+                                    seat.borrow_mut().menu_click_button = None;
+                                    return;
                                 }
-                                drop(context);
-                                open_window_menu(
-                                    state,
-                                    output_id,
-                                    px,
-                                    py,
-                                    false,
-                                    rwm::WindowMenuMode::Pointer,
-                                    _qh,
-                                );
+                            }
+                            match target {
+                                rwm::PointerTarget::Desktop(output_id) => {
+                                    if button == crate::config::button::RIGHT {
+                                        let (px, py) = {
+                                            let seat_ref = seat.borrow();
+                                            (seat_ref.last_surface_x, seat_ref.last_surface_y)
+                                        };
+                                        let mut context = state.context.borrow_mut();
+                                        if context.window_menu.is_some() {
+                                            context.close_window_menu();
+                                        }
+                                        drop(context);
+                                        open_window_menu(
+                                            state,
+                                            output_id,
+                                            px,
+                                            py,
+                                            false,
+                                            rwm::WindowMenuMode::Pointer,
+                                            _qh,
+                                        );
+                                        update_menu_hover_from_global(state, *seat_id, _qh);
+                                        seat.borrow_mut().menu_click_button = Some(button);
+                                    }
+                                }
+                                rwm::PointerTarget::Menu => {
+                                    seat.borrow_mut().menu_click_button = Some(button);
+                                }
+                                rwm::PointerTarget::MenuShield(_) => {}
+                                rwm::PointerTarget::None => {}
                             }
                         }
-                        rwm::PointerTarget::Menu => {
-                            if button == crate::config::button::LEFT {
-                                state.context.borrow_mut().activate_menu_hovered();
+                        wayland_client::WEnum::Value(wl_pointer::ButtonState::Released) => {
+                            let (activate, close_menu) = {
+                                let seat_ref = seat.borrow();
+                                if seat_ref.menu_click_button != Some(button) {
+                                    (false, false)
+                                } else {
+                                    let context = state.context.borrow();
+                                    let hovered = context
+                                        .window_menu
+                                        .as_ref()
+                                        .and_then(|menu| menu.hovered)
+                                        .is_some();
+                                    if context.window_menu_mode == Some(rwm::WindowMenuMode::Pointer) {
+                                        if hovered {
+                                            (true, false)
+                                        } else {
+                                            (false, false)
+                                        }
+                                    } else {
+                                        (false, false)
+                                    }
+                                }
+                            };
+                            seat.borrow_mut().menu_click_button = None;
+                            if activate {
+                                request_manage_dirty(state);
+                                seat.borrow_mut()
+                                    .queue_action(binding::Action::ActivateMenuHovered);
+                                return;
+                            }
+                            if close_menu {
+                                state.context.borrow_mut().close_window_menu();
                             }
                         }
-                        rwm::PointerTarget::MenuShield => {}
-                        rwm::PointerTarget::None => {}
+                        _ => {}
                     }
                 }
                 _ => {}

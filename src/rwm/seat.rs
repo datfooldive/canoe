@@ -58,6 +58,9 @@ pub struct Seat {
     /// Window currently under the pointer
     pub window_below_pointer: Option<Weak<RefCell<super::Window>>>,
 
+    /// Mouse button pressed for menu activation
+    pub menu_click_button: Option<u32>,
+
     /// Last close-button click for double-click detection
     pub last_close_click: Option<(WindowId, Instant)>,
 
@@ -94,6 +97,7 @@ impl Seat {
             last_surface_y: 0,
             pointer_target: PointerTarget::None,
             window_below_pointer: None,
+            menu_click_button: None,
             last_close_click: None,
             unhandled_actions: VecDeque::new(),
             xkb_bindings: Vec::new(),
@@ -250,7 +254,7 @@ pub enum PointerTarget {
     None,
     Desktop(OutputId),
     Menu,
-    MenuShield,
+    MenuShield(OutputId),
 }
 
 impl std::fmt::Debug for Seat {

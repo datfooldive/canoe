@@ -124,6 +124,8 @@ pub enum Action {
     /// Switch to previous tag
     SwitchToPreviousTag,
 
+    /// Activate selected window menu item
+    ActivateMenuHovered,
     /// Cycle window menu for Alt-Tab
     WindowMenuCycle,
     /// Activate selected window menu item for Alt-Tab

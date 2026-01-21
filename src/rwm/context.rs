@@ -450,6 +450,13 @@ impl Context {
                     }
                 }
             }
+            Action::ActivateMenuHovered => {
+                if self.window_menu_mode == Some(WindowMenuMode::Pointer) {
+                    if self.window_menu.as_ref().and_then(|menu| menu.hovered).is_some() {
+                        self.activate_menu_hovered();
+                    }
+                }
+            }
             Action::WindowMenuCycle => {
                 if self.window_menu_mode == Some(WindowMenuMode::AltTab) {
                     if let Some(menu) = self.window_menu.as_mut() {
