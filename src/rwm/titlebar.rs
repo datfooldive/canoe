@@ -274,6 +274,20 @@ impl Titlebar {
                     bg_argb,
                 );
 
+                let separator_y = title_y + title_height;
+                if separator_y >= 0 && separator_y < height - BORDER_WIDTH {
+                    fill_rect(
+                        pixels,
+                        width,
+                        height,
+                        title_x,
+                        separator_y,
+                        content_width,
+                        1,
+                        rgba_to_argb(BORDER_COLOR_OUTER),
+                    );
+                }
+
                 // Render title text if we have a title and font
                 if let Some(title_str) = title {
                     if !title_str.is_empty() {
