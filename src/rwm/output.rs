@@ -6,6 +6,8 @@ use std::cell::RefCell;
 use std::rc::Weak;
 use wayland_client::protocol::wl_output::WlOutput;
 
+use super::DesktopSurface;
+
 /// Output identifier
 pub type OutputId = usize;
 
@@ -55,6 +57,9 @@ pub struct Output {
     pub exclusive_width: i32,
     pub exclusive_height: i32,
 
+    /// Desktop background surface for pointer input
+    pub desktop_surface: Option<DesktopSurface>,
+
     /// Whether this output has been removed
     pub removed: bool,
 }
@@ -83,6 +88,7 @@ impl Output {
             exclusive_y: 0,
             exclusive_width: 0,
             exclusive_height: 0,
+            desktop_surface: None,
             removed: false,
         }
     }

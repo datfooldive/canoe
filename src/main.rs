@@ -22,12 +22,14 @@ use nix::sys::signal::{SigSet, Signal};
 use nix::sys::signalfd::{SfdFlags, SignalFd};
 
 use wayland_client::protocol::{
-    wl_buffer, wl_compositor, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm, wl_shm_pool,
-    wl_surface,
+    wl_buffer, wl_compositor, wl_output, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm,
+    wl_shm_pool, wl_surface,
 };
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle};
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::WpCursorShapeDeviceV1;
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1;
+use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::ZwlrLayerShellV1;
+use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1;
 
 /// Application state for Wayland dispatch
 struct AppState {
@@ -45,8 +47,10 @@ struct Globals {
     rwm_layer_shell: Option<RiverLayerShellV1>,
     rwm_input_manager: Option<RiverInputManagerV1>,
     rwm_libinput_config: Option<RiverLibinputConfigV1>,
+    wlr_layer_shell: Option<ZwlrLayerShellV1>,
     cursor_shape_manager: Option<WpCursorShapeManagerV1>,
     wl_seats: HashMap<u32, wl_seat::WlSeat>,
+    wl_outputs: HashMap<u32, wl_output::WlOutput>,
 }
 
 fn attach_wl_seat(
@@ -95,6 +99,148 @@ fn attach_cursor_shape_device(
     seat_ref.borrow_mut().cursor_shape_device = Some(device);
 }
 
+fn render_window_menu(state: &mut AppState, qh: &QueueHandle<AppState>) {
+    let (Some(shm), Some(compositor)) = (
+        state.globals.shm.as_ref(),
+        state.globals.compositor.as_ref(),
+    ) else {
+        return;
+    };
+
+    let mut context = state.context.borrow_mut();
+    if let Some(menu) = context.window_menu.as_mut() {
+        if !menu.configured {
+            return;
+        }
+        menu.ensure_buffer(shm, qh);
+        menu.render();
+        menu.update_input_region(compositor, qh);
+        menu.commit();
+    }
+}
+
+fn open_window_menu(
+    state: &mut AppState,
+    output_id: rwm::OutputId,
+    pointer_x: i32,
+    pointer_y: i32,
+    qh: &QueueHandle<AppState>,
+) {
+    let (Some(compositor), Some(layer_shell)) = (
+        state.globals.compositor.as_ref(),
+        state.globals.wlr_layer_shell.as_ref(),
+    ) else {
+        return;
+    };
+
+    let (items, output_info) = {
+        let context = state.context.borrow();
+        let items = context.collect_menu_items(output_id);
+        let info = context.outputs.get(&output_id).map(|output| {
+            let out = output.borrow();
+            (out.width, out.height, out.wl_output.clone())
+        });
+        (items, info)
+    };
+
+    let Some((ow, oh, wl_output)) = output_info else {
+        return;
+    };
+
+    if items.is_empty() {
+        return;
+    }
+
+    let surface = compositor.create_surface(qh, ());
+    let layer_surface = layer_shell.get_layer_surface(
+        &surface,
+        wl_output.as_ref(),
+        wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer::Overlay,
+        "rwm-window-menu".to_string(),
+        qh,
+        rwm::LayerSurfaceKind::Menu,
+    );
+
+    let mut menu =
+        rwm::WindowMenu::new(surface, layer_surface, output_id, items, pointer_x, pointer_y);
+    let mut local_x = pointer_x.max(0);
+    let mut local_y = pointer_y.max(0);
+    if ow > 0 && oh > 0 {
+        if local_x + menu.width > ow {
+            local_x = (ow - menu.width).max(0);
+        }
+        if local_y + menu.height > oh {
+            local_y = (oh - menu.height).max(0);
+        }
+    }
+
+    menu.layer_surface.set_anchor(
+        wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Top
+            | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Left,
+    );
+    menu.layer_surface.set_margin(local_y, 0, 0, local_x);
+    menu.layer_surface.set_size(menu.width as u32, menu.height as u32);
+    menu.layer_surface.set_keyboard_interactivity(
+        wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::KeyboardInteractivity::None,
+    );
+    menu.layer_surface.set_exclusive_zone(-1);
+    menu.surface.commit();
+
+    let mut context = state.context.borrow_mut();
+    context.window_menu = Some(menu);
+}
+
+fn ensure_desktop_surface(
+    state: &mut AppState,
+    output_id: rwm::OutputId,
+    qh: &QueueHandle<AppState>,
+) {
+    let (Some(compositor), Some(layer_shell)) = (
+        state.globals.compositor.as_ref(),
+        state.globals.wlr_layer_shell.as_ref(),
+    ) else {
+        return;
+    };
+
+    let output = {
+        let context = state.context.borrow();
+        context.outputs.get(&output_id).cloned()
+    };
+    let Some(output) = output else {
+        return;
+    };
+
+    if output.borrow().desktop_surface.is_some() {
+        return;
+    }
+
+    let wl_output = output.borrow().wl_output.clone();
+    let surface = compositor.create_surface(qh, ());
+    let layer_surface = layer_shell.get_layer_surface(
+        &surface,
+        wl_output.as_ref(),
+        wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer::Background,
+        "rwm-desktop".to_string(),
+        qh,
+        rwm::LayerSurfaceKind::Desktop(output_id),
+    );
+
+    layer_surface.set_anchor(
+        wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Top
+            | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Bottom
+            | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Left
+            | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Right,
+    );
+    layer_surface.set_exclusive_zone(-1);
+    layer_surface.set_keyboard_interactivity(
+        wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::KeyboardInteractivity::None,
+    );
+    layer_surface.set_size(0, 0);
+    surface.commit();
+
+    output.borrow_mut().desktop_surface = Some(rwm::DesktopSurface::new(surface, layer_surface, output_id));
+}
+
 impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
     fn event(
         state: &mut Self,
@@ -121,6 +267,10 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
                     log::info!("Binding wl_shm v{}", version.min(1));
                     let shm: wl_shm::WlShm = registry.bind(name, version.min(1), qh, ());
                     state.globals.shm = Some(shm);
+                }
+                "wl_output" => {
+                    let output: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ());
+                    state.globals.wl_outputs.insert(name, output);
                 }
                 "wl_seat" => {
                     log::info!("Binding wl_seat v{}", version.min(7));
@@ -157,6 +307,15 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
                     state.globals.rwm_layer_shell = Some(ls.clone());
                     state.context.borrow_mut().rwm_layer_shell = Some(ls);
                 }
+                "zwlr_layer_shell_v1" => {
+                    log::info!("Binding zwlr_layer_shell_v1 v{}", version.min(4));
+                    let layer_shell: ZwlrLayerShellV1 = registry.bind(name, version.min(4), qh, ());
+                    state.globals.wlr_layer_shell = Some(layer_shell);
+                    let outputs: Vec<_> = state.context.borrow().outputs.keys().copied().collect();
+                    for output_id in outputs {
+                        ensure_desktop_surface(state, output_id, qh);
+                    }
+                }
                 "river_input_manager_v1" => {
                     let im: RiverInputManagerV1 = registry.bind(name, version.min(1), qh, ());
                     state.globals.rwm_input_manager = Some(im.clone());
@@ -186,6 +345,19 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
                 _ => {}
             }
         }
+    }
+}
+
+impl Dispatch<ZwlrLayerShellV1, ()> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZwlrLayerShellV1,
+        _event: wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // zwlr_layer_shell_v1 has no events.
     }
 }
 
@@ -583,7 +755,11 @@ impl Dispatch<RiverOutputV1, rwm::OutputId> for AppState {
                 state.context.borrow_mut().destroy_output(*output_id);
             }
             Event::WlOutput { name } => {
-                output.borrow_mut().wl_output_name = name;
+                let mut out = output.borrow_mut();
+                out.wl_output_name = name;
+                out.wl_output = state.globals.wl_outputs.get(&name).cloned();
+                drop(out);
+                ensure_desktop_surface(state, *output_id, qh);
             }
             Event::Position { x, y } => {
                 output.borrow_mut().update_position(x, y);
@@ -657,6 +833,7 @@ impl Dispatch<RiverSeatV1, rwm::SeatId> for AppState {
                     w.borrow().rwm_window.as_ref().map(|rw| rw == &window).unwrap_or(false)
                 }) {
                     drop(context);
+                    state.context.borrow_mut().close_window_menu();
                     log::debug!("Window interaction - focusing window {}", wid);
                     let mut context = state.context.borrow_mut();
                     context.focus(wid);
@@ -687,6 +864,80 @@ impl Dispatch<RiverSeatV1, rwm::SeatId> for AppState {
             Event::PointerPosition { x, y } => {
                 seat.borrow_mut().update_pointer_position(x, y);
                 state.context.borrow_mut().update_cursor_for_seat(*seat_id);
+            }
+            _ => {}
+        }
+    }
+}
+
+// Implement dispatch for wlr layer surfaces (desktop/menu)
+impl Dispatch<ZwlrLayerSurfaceV1, rwm::LayerSurfaceKind> for AppState {
+    fn event(
+        state: &mut Self,
+        proxy: &ZwlrLayerSurfaceV1,
+        event: wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Event,
+        kind: &rwm::LayerSurfaceKind,
+        _conn: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Event;
+
+        match event {
+            Event::Configure { serial, width, height } => {
+                proxy.ack_configure(serial);
+                match kind {
+                    rwm::LayerSurfaceKind::Desktop(output_id) => {
+                        let output = {
+                            let context = state.context.borrow();
+                            context.outputs.get(output_id).cloned()
+                        };
+                        let Some(output) = output else {
+                            return;
+                        };
+                        let mut out = output.borrow_mut();
+                        let Some(desktop) = out.desktop_surface.as_mut() else {
+                            return;
+                        };
+                        if (desktop.width, desktop.height) != (width as i32, height as i32) {
+                            desktop.reset_buffer();
+                        }
+                        desktop.configure(width as i32, height as i32);
+                        if let (Some(shm), Some(compositor)) =
+                            (state.globals.shm.as_ref(), state.globals.compositor.as_ref())
+                        {
+                            desktop.ensure_buffer(shm, qh);
+                            desktop.render();
+                            desktop.update_input_region(compositor, qh);
+                            desktop.commit();
+                        }
+                    }
+                    rwm::LayerSurfaceKind::Menu => {
+                        let mut context = state.context.borrow_mut();
+                        let Some(menu) = context.window_menu.as_mut() else {
+                            return;
+                        };
+                        if width > 0 && height > 0 && (menu.width, menu.height) != (width as i32, height as i32) {
+                            menu.reset_buffer();
+                            menu.width = width as i32;
+                            menu.height = height as i32;
+                        }
+                        menu.configured = true;
+                        drop(context);
+                        render_window_menu(state, qh);
+                    }
+                }
+            }
+            Event::Closed => {
+                match kind {
+                    rwm::LayerSurfaceKind::Desktop(output_id) => {
+                        if let Some(output) = state.context.borrow().outputs.get(output_id) {
+                            output.borrow_mut().desktop_surface = None;
+                        }
+                    }
+                    rwm::LayerSurfaceKind::Menu => {
+                        state.context.borrow_mut().window_menu = None;
+                    }
+                }
             }
             _ => {}
         }
@@ -1016,14 +1267,111 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
         };
         if let Some(seat) = seat {
             match event {
-                wl_pointer::Event::Enter { serial, .. } => {
-                    seat.borrow_mut().pointer_enter_serial = serial;
+                wl_pointer::Event::Enter {
+                    serial,
+                    surface,
+                    surface_x,
+                    surface_y,
+                } => {
+                    let mut target = rwm::PointerTarget::None;
+
+                    let surface_pos = (surface_x.round() as i32, surface_y.round() as i32);
+                    {
+                        let mut context = state.context.borrow_mut();
+                        if let Some(menu) = context.window_menu.as_mut() {
+                            if menu.surface == surface {
+                                target = rwm::PointerTarget::Menu;
+                                let changed = context.update_menu_hover(
+                                    surface_pos.0,
+                                    surface_pos.1,
+                                );
+                                if changed {
+                                    drop(context);
+                                    render_window_menu(state, _qh);
+                                }
+                            }
+                        }
+                    }
+
+                    if target == rwm::PointerTarget::None {
+                        let context = state.context.borrow();
+                        for (output_id, output) in &context.outputs {
+                            if let Some(desktop) = output.borrow().desktop_surface.as_ref() {
+                                if desktop.surface == surface {
+                                    target = rwm::PointerTarget::Desktop(*output_id);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    {
+                        let mut seat_ref = seat.borrow_mut();
+                        seat_ref.pointer_enter_serial = serial;
+                        seat_ref.pointer_target = target;
+                        seat_ref.last_surface_x = surface_pos.0;
+                        seat_ref.last_surface_y = surface_pos.1;
+                    }
                     state.context.borrow_mut().update_cursor_for_seat(*seat_id);
                 }
                 wl_pointer::Event::Leave { serial, .. } => {
                     let mut seat = seat.borrow_mut();
                     seat.pointer_enter_serial = serial;
+                    seat.pointer_target = rwm::PointerTarget::None;
                     seat.cursor_shape = None;
+                }
+                wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
+                    {
+                        let mut seat_ref = seat.borrow_mut();
+                        seat_ref.last_surface_x = surface_x.round() as i32;
+                        seat_ref.last_surface_y = surface_y.round() as i32;
+                    }
+                    if seat.borrow().pointer_target == rwm::PointerTarget::Menu {
+                        let changed = state
+                            .context
+                            .borrow_mut()
+                            .update_menu_hover(surface_x.round() as i32, surface_y.round() as i32);
+                        if changed {
+                            render_window_menu(state, _qh);
+                        }
+                    }
+                }
+                wl_pointer::Event::Button { button, state: btn_state, .. } => {
+                    if btn_state
+                        != wayland_client::WEnum::Value(wl_pointer::ButtonState::Pressed)
+                    {
+                        return;
+                    }
+                    let target = seat.borrow().pointer_target;
+                    if target != rwm::PointerTarget::Menu {
+                        let mut context = state.context.borrow_mut();
+                        if context.window_menu.is_some() {
+                            context.close_window_menu();
+                            return;
+                        }
+                    }
+                    match target {
+                        rwm::PointerTarget::Desktop(output_id) => {
+                            if button == crate::config::button::RIGHT {
+                                let (px, py) = {
+                                    let seat_ref = seat.borrow();
+                                    (seat_ref.last_surface_x, seat_ref.last_surface_y)
+                                };
+                                let mut context = state.context.borrow_mut();
+                                if context.window_menu.is_some() {
+                                    context.close_window_menu();
+                                }
+                                drop(context);
+                                open_window_menu(state, output_id, px, py, _qh);
+                            }
+                        }
+                        rwm::PointerTarget::Menu => {
+                            if button == crate::config::button::LEFT {
+                                state.context.borrow_mut().activate_menu_hovered();
+                            }
+                        }
+                        rwm::PointerTarget::None => {}
+                    }
                 }
                 _ => {}
             }
@@ -1072,6 +1420,32 @@ impl Dispatch<wl_surface::WlSurface, TitlebarSurfaceData> for AppState {
         _qh: &QueueHandle<Self>,
     ) {
         // Surface events (enter/leave output) - not needed for titlebars
+    }
+}
+
+impl Dispatch<wl_surface::WlSurface, ()> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_surface::WlSurface,
+        _event: wl_surface::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // Surface events for menu/desktop are not used.
+    }
+}
+
+impl Dispatch<wl_output::WlOutput, ()> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_output::WlOutput,
+        _event: wl_output::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // Output events are not needed for WM surfaces.
     }
 }
 

@@ -15,7 +15,7 @@ use std::process::{Command, Stdio};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use super::{Output, OutputId, Seat, SeatId, Window, WindowId};
+use super::{MenuItem, Output, OutputId, Seat, SeatId, Window, WindowId, WindowMenu};
 
 /// The central window manager context
 pub struct Context {
@@ -54,6 +54,9 @@ pub struct Context {
 
     // Terminal windows for swallowing
     pub terminal_windows: HashMap<i32, WindowId>, // pid -> window_id
+
+    /// Window menu surface and state
+    pub window_menu: Option<WindowMenu>,
 }
 
 impl Context {
@@ -87,6 +90,7 @@ impl Context {
             startup_unminimize_done: false,
 
             terminal_windows: HashMap::new(),
+            window_menu: None,
         }
     }
 
@@ -1336,6 +1340,78 @@ impl Context {
         }
     }
 
+    /// Build menu items for windows on the given output (including hidden).
+    pub fn collect_menu_items(&self, output_id: OutputId) -> Vec<MenuItem> {
+        let Some(output) = self.outputs.get(&output_id) else {
+            return Vec::new();
+        };
+        let output_ref = output.borrow();
+        let focused = self.focused_window;
+
+        let mut items = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        for window_id in &self.focus_stack {
+            if let Some(window) = self.windows.get(window_id) {
+                if window_matches_output(&output_ref, &window.borrow()) {
+                    items.push(menu_item_from_window(*window_id, focused, &window.borrow()));
+                    seen.insert(*window_id);
+                }
+            }
+        }
+
+        for (&window_id, window) in &self.windows {
+            if seen.contains(&window_id) {
+                continue;
+            }
+            if window_matches_output(&output_ref, &window.borrow()) {
+                items.push(menu_item_from_window(window_id, focused, &window.borrow()));
+            }
+        }
+
+        items
+    }
+
+    /// Update menu hover based on surface-local pointer position.
+    pub fn update_menu_hover(&mut self, x: i32, y: i32) -> bool {
+        if let Some(menu) = self.window_menu.as_mut() {
+            return menu.update_hover(x, y);
+        }
+        false
+    }
+
+    /// Activate the currently hovered menu item.
+    pub fn activate_menu_hovered(&mut self) {
+        let Some(menu) = self.window_menu.as_ref() else {
+            return;
+        };
+        let Some(idx) = menu.hovered else {
+            return;
+        };
+        let window_id = menu.items.get(idx).map(|item| item.window_id);
+        self.window_menu = None;
+
+        let Some(window_id) = window_id else {
+            return;
+        };
+
+        if let Some(window) = self.windows.get(&window_id) {
+            {
+                let mut w = window.borrow_mut();
+                if w.hidden {
+                    w.show();
+                }
+                w.place_top();
+            }
+            self.focus(window_id);
+        }
+    }
+
+    /// Close the window menu if open.
+    pub fn close_window_menu(&mut self) {
+        self.window_menu = None;
+    }
+
     /// Update the cursor shape based on resize state or border hover.
     pub fn update_cursor_for_seat(&mut self, seat_id: SeatId) {
         let seat = match self.seats.get(&seat_id) {
@@ -1527,4 +1603,32 @@ fn point_in_titlebar(
     }
 
     px >= x && px <= x + width && py >= y - titlebar_height && py <= y
+}
+
+fn window_matches_output(output: &Output, window: &Window) -> bool {
+    if let Some(ref win_output) = window.output {
+        if let Some(win_output) = win_output.upgrade() {
+            if win_output.borrow().id != output.id {
+                return false;
+            }
+        }
+    }
+    (window.tag & output.tag) != 0
+}
+
+fn menu_item_from_window(window_id: WindowId, focused: Option<WindowId>, window: &Window) -> MenuItem {
+    let title = window
+        .title
+        .as_ref()
+        .filter(|t| !t.is_empty())
+        .cloned()
+        .or_else(|| window.app_id.clone())
+        .unwrap_or_else(|| format!("Window {}", window_id));
+
+    MenuItem {
+        window_id,
+        title,
+        hidden: window.hidden,
+        active: focused == Some(window_id),
+    }
 }

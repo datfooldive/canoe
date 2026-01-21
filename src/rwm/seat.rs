@@ -15,7 +15,7 @@ use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::
     Shape as CursorShape, WpCursorShapeDeviceV1,
 };
 
-use super::WindowId;
+use super::{OutputId, WindowId};
 
 /// Seat identifier
 pub type SeatId = usize;
@@ -49,6 +49,11 @@ pub struct Seat {
     /// Pointer position
     pub pointer_x: i32,
     pub pointer_y: i32,
+    /// Last pointer position in surface-local coordinates
+    pub last_surface_x: i32,
+    pub last_surface_y: i32,
+    /// Pointer target for WM-owned surfaces
+    pub pointer_target: PointerTarget,
 
     /// Window currently under the pointer
     pub window_below_pointer: Option<Weak<RefCell<super::Window>>>,
@@ -85,6 +90,9 @@ impl Seat {
             focus_exclusive: false,
             pointer_x: 0,
             pointer_y: 0,
+            last_surface_x: 0,
+            last_surface_y: 0,
+            pointer_target: PointerTarget::None,
             window_below_pointer: None,
             last_close_click: None,
             unhandled_actions: VecDeque::new(),
@@ -234,6 +242,14 @@ impl Seat {
             }
         }
     }
+}
+
+/// Pointer target for WM-owned surfaces
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PointerTarget {
+    None,
+    Desktop(OutputId),
+    Menu,
 }
 
 impl std::fmt::Debug for Seat {
