@@ -275,8 +275,8 @@ impl Titlebar {
         }
     }
 
-    /// Render the titlebar with the given title and active state
-    pub fn render(&mut self, title: Option<&str>, is_active: bool) {
+    /// Render the titlebar with the given title and state
+    pub fn render(&mut self, title: Option<&str>, is_active: bool, is_maximized: bool) {
         if let Some(ref mut mmap) = self.mmap {
             let width = self.width;
             let height = self.height;
@@ -420,16 +420,28 @@ impl Titlebar {
                     title_height,
                     button_border,
                 );
-                draw_glyph_caret(
-                    pixels,
-                    width,
-                    height,
-                    title_x + buttons.maximize.x,
-                    title_y + buttons.maximize.y,
-                    buttons.maximize.width,
-                    button_border,
-                    false,
-                );
+                if is_maximized {
+                    draw_glyph_caret_pair(
+                        pixels,
+                        width,
+                        height,
+                        title_x + buttons.maximize.x,
+                        title_y + buttons.maximize.y,
+                        buttons.maximize.width,
+                        button_border,
+                    );
+                } else {
+                    draw_glyph_caret(
+                        pixels,
+                        width,
+                        height,
+                        title_x + buttons.maximize.x,
+                        title_y + buttons.maximize.y,
+                        buttons.maximize.width,
+                        button_border,
+                        false,
+                    );
+                }
 
                 let separator_y = title_y + title_height;
                 if separator_y >= 0 && separator_y < height - BORDER_WIDTH {
@@ -859,6 +871,57 @@ fn draw_glyph_caret(
             let w = 1 + i * 2;
             (mid_x - i, w)
         };
+        fill_rect(
+            pixels,
+            buffer_width,
+            buffer_height,
+            start,
+            row,
+            width,
+            1,
+            color_argb,
+        );
+    }
+}
+
+fn draw_glyph_caret_pair(
+    pixels: &mut [u8],
+    buffer_width: i32,
+    buffer_height: i32,
+    x: i32,
+    y: i32,
+    size: i32,
+    color_argb: u32,
+) {
+    let span = (size / 4).max(2);
+    let glyph_height = span * 2 + 1;
+    let inner_size = (size - 2).max(1);
+    let gap = 1;
+    let total_height = glyph_height * 2 + gap;
+    let top_y = y + 1 + (inner_size - total_height) / 2 + 5;
+    let mid_x = x + size / 2;
+
+    for i in 0..=span {
+        let row = top_y + i;
+        let width = 1 + i * 2;
+        let start = mid_x - i;
+        fill_rect(
+            pixels,
+            buffer_width,
+            buffer_height,
+            start,
+            row,
+            width,
+            1,
+            color_argb,
+        );
+    }
+
+    let down_top = top_y + glyph_height + gap - 5;
+    for i in 0..=span {
+        let row = down_top + i;
+        let width = 1 + (span - i) * 2;
+        let start = mid_x - (span - i);
         fill_rect(
             pixels,
             buffer_width,

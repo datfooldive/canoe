@@ -29,6 +29,16 @@ pub enum ClipState {
     Clipped,
 }
 
+/// Saved geometry for restoring after maximize
+#[derive(Debug, Clone, Copy)]
+pub struct SavedGeometry {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub floating: bool,
+}
+
 /// Operator state for move/resize operations
 #[derive(Debug, Clone)]
 pub enum Operator {
@@ -104,6 +114,8 @@ pub struct Window {
     pub fullscreen: FullscreenState,
     /// Maximized state
     pub maximized: bool,
+    /// Geometry to restore when unmaximizing
+    pub pre_maximize: Option<SavedGeometry>,
     /// Floating state
     pub floating: bool,
     /// Hidden state
@@ -167,6 +179,7 @@ impl Window {
             min_height: 0,
             fullscreen: FullscreenState::None,
             maximized: false,
+            pre_maximize: None,
             floating: false,
             hidden: false,
             clip_state: ClipState::Unknown,
@@ -324,6 +337,24 @@ impl Window {
     pub fn inform_unmaximized(&self) {
         if let Some(ref rwm_window) = self.rwm_window {
             rwm_window.inform_unmaximized();
+        }
+    }
+
+    pub fn clear_maximized_without_restore(&mut self) {
+        if self.maximized {
+            self.maximized = false;
+            self.pre_maximize = None;
+            self.inform_unmaximized();
+        }
+    }
+
+    pub fn unmaximize_restore_size_only(&mut self) {
+        if self.maximized {
+            self.maximized = false;
+            if let Some(saved) = self.pre_maximize.take() {
+                self.propose_dimensions(saved.width, saved.height);
+            }
+            self.inform_unmaximized();
         }
     }
 

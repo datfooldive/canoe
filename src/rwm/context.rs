@@ -715,6 +715,7 @@ impl Context {
             if let Some(window) = self.windows.get(&window_id) {
                 let mut w = window.borrow_mut();
                 if w.floating {
+                    w.unmaximize_restore_size_only();
                     let new_x = w.x + dx;
                     let new_y = w.y + dy;
                     w.set_position(new_x, new_y);
@@ -729,6 +730,7 @@ impl Context {
             if let Some(window) = self.windows.get(&window_id) {
                 let mut w = window.borrow_mut();
                 if w.floating {
+                    w.clear_maximized_without_restore();
                     let new_width = (w.width + dw).max(w.min_width);
                     let new_height = (w.height + dh).max(w.min_height);
                     w.propose_dimensions(new_width, new_height);
@@ -755,6 +757,11 @@ impl Context {
             if let Some(window) = self.windows.get(&window_id) {
                 if let Some(seat) = self.seats.get(&seat_id) {
                     let mut w = window.borrow_mut();
+                    let (px, py) = {
+                        let seat_ref = seat.borrow();
+                        (seat_ref.pointer_x, seat_ref.pointer_y)
+                    };
+                    self.unmaximize_for_move(&mut w, px, py, true);
                     w.floating = true; // Make floating if not already
                     w.start_move(Rc::downgrade(seat));
                     seat.borrow().start_pointer_op();
@@ -782,6 +789,7 @@ impl Context {
                 if let Some(seat) = self.seats.get(&seat_id) {
                     let edges = {
                         let mut w = window.borrow_mut();
+                        w.clear_maximized_without_restore();
                         w.floating = true; // Make floating if not already
 
                         // Determine edges based on pointer position relative to window
@@ -845,6 +853,7 @@ impl Context {
         if edges != 0 {
             {
                 let mut w = window.borrow_mut();
+                w.clear_maximized_without_restore();
                 w.floating = true;
                 w.start_resize(Rc::downgrade(&seat), edges);
             }
@@ -890,11 +899,16 @@ impl Context {
                 }
 
                 if buttons.maximize.contains(local_x, local_y) {
-                    self.maximize_window(window_id);
+                    if window.borrow().maximized {
+                        self.unmaximize_window(window_id);
+                    } else {
+                        self.maximize_window(window_id);
+                    }
                     return;
                 }
 
                 let mut w = window.borrow_mut();
+                self.unmaximize_for_move(&mut w, px, py, false);
                 w.floating = true;
                 w.start_move(Rc::downgrade(&seat));
                 seat.borrow().start_pointer_op();
@@ -904,6 +918,7 @@ impl Context {
 
         if has_titlebar && point_in_titlebar(x, y, width, titlebar_height, px, py) {
             let mut w = window.borrow_mut();
+            self.unmaximize_for_move(&mut w, px, py, false);
             w.floating = true;
             w.start_move(Rc::downgrade(&seat));
             seat.borrow().start_pointer_op();
@@ -1020,11 +1035,59 @@ impl Context {
 
         if let Some(window) = self.windows.get(&window_id) {
             let mut w = window.borrow_mut();
+            if !w.maximized {
+                w.pre_maximize = Some(super::window::SavedGeometry {
+                    x: w.x,
+                    y: w.y,
+                    width: w.width,
+                    height: w.height,
+                    floating: w.floating,
+                });
+            }
             w.floating = true;
             w.set_position(content_x, content_y);
             w.propose_dimensions(content_w, content_h);
             w.maximized = true;
             w.inform_maximized();
+        }
+    }
+
+    fn unmaximize_for_move(&self, w: &mut Window, pointer_x: i32, pointer_y: i32, adjust_y: bool) {
+        if !w.maximized {
+            return;
+        }
+
+        let saved = w.pre_maximize.take();
+        w.maximized = false;
+
+        if let Some(saved) = saved {
+            let cur_w = w.width.max(1);
+            let cur_h = w.height.max(1);
+            let rel_x = (pointer_x - w.x) as f32 / cur_w as f32;
+            let rel_y = (pointer_y - w.y) as f32 / cur_h as f32;
+            w.propose_dimensions(saved.width, saved.height);
+            let new_x = pointer_x - (rel_x * saved.width as f32).round() as i32;
+            let new_y = if adjust_y {
+                pointer_y - (rel_y * saved.height as f32).round() as i32
+            } else {
+                w.y
+            };
+            w.set_position(new_x, new_y);
+        }
+
+        w.inform_unmaximized();
+    }
+
+    fn unmaximize_window(&mut self, window_id: WindowId) {
+        if let Some(window) = self.windows.get(&window_id) {
+            let mut w = window.borrow_mut();
+            w.maximized = false;
+            if let Some(saved) = w.pre_maximize.take() {
+                w.floating = saved.floating;
+                w.set_position(saved.x, saved.y);
+                w.propose_dimensions(saved.width, saved.height);
+            }
+            w.inform_unmaximized();
         }
     }
 
@@ -1205,11 +1268,7 @@ impl Context {
                 self.maximize_window(window_id);
             }
             WindowEvent::Unmaximize => {
-                if let Some(window) = self.windows.get(&window_id) {
-                    let mut w = window.borrow_mut();
-                    w.maximized = false;
-                    w.inform_unmaximized();
-                }
+                self.unmaximize_window(window_id);
             }
             WindowEvent::Minimize => {
                 self.hide_window(window_id);
@@ -1223,6 +1282,7 @@ impl Context {
                 if let Some(window) = self.windows.get(&window_id) {
                     if let Some(seat) = seat.upgrade() {
                         let mut w = window.borrow_mut();
+                        w.clear_maximized_without_restore();
                         w.start_resize(Rc::downgrade(&seat), edges);
                         seat.borrow().start_pointer_op();
                     }

@@ -620,6 +620,7 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                         let width = w.width;
                         let title = w.title.clone();
                         let is_focused = focused_window == Some(window_id);
+                        let is_maximized = w.maximized;
                         let height = w.height;
 
                         // Update titlebar if it exists and window has valid dimensions
@@ -634,7 +635,7 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                                 }
 
                                 // Render titlebar content
-                                titlebar.render(title.as_deref(), is_focused);
+                                titlebar.render(title.as_deref(), is_focused, is_maximized);
                                 log::info!("Window {} titlebar rendered, focused={}", window_id, is_focused);
 
                                 // Position decoration so it sits above content with borders
