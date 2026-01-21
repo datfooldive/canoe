@@ -1201,6 +1201,16 @@ impl Context {
                     window.borrow_mut().exit_fullscreen();
                 }
             }
+            WindowEvent::Maximize => {
+                self.maximize_window(window_id);
+            }
+            WindowEvent::Unmaximize => {
+                if let Some(window) = self.windows.get(&window_id) {
+                    let mut w = window.borrow_mut();
+                    w.maximized = false;
+                    w.inform_unmaximized();
+                }
+            }
             WindowEvent::Minimize => {
                 self.hide_window(window_id);
             }
