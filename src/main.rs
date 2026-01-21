@@ -131,7 +131,6 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                 // Update titlebars
                 if let Some(ref shm) = state.globals.shm {
                     let context = state.context.borrow();
-                    let border_color = context.config.border_color;
                     let focused_window = context.focused_window;
 
                     for (&window_id, window) in &context.windows {
@@ -146,27 +145,23 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                         let width = w.width;
                         let title = w.title.clone();
                         let is_focused = focused_window == Some(window_id);
-                        let color = if is_focused {
-                            border_color.focus
-                        } else {
-                            border_color.unfocus
-                        };
+                        let height = w.height;
 
                         // Update titlebar if it exists and window has valid dimensions
                         if let Some(ref mut titlebar) = w.titlebar {
                             log::info!("Window {} titlebar: width={}, has_buffer={}",
                                 window_id, width, titlebar.buffer.is_some());
-                            if width > 0 {
+                            if width > 0 && height > 0 {
                                 // Ensure buffer is allocated
-                                titlebar.ensure_buffer(width, shm, qh);
+                                titlebar.ensure_buffer(width, height, shm, qh);
 
                                 // Render titlebar content
                                 titlebar.render(title.as_deref(), is_focused);
                                 log::info!("Window {} titlebar rendered, focused={}", window_id, is_focused);
 
-                                // Position titlebar above window (negative Y offset)
-                                let titlebar_height = rwm::titlebar::TITLEBAR_HEIGHT;
-                                titlebar.set_offset(0, -titlebar_height);
+                                // Position decoration so the border wraps the window
+                                let border_width = rwm::titlebar::BORDER_WIDTH;
+                                titlebar.set_offset(-border_width, -border_width);
 
                                 // Sync and commit (only if we have a buffer)
                                 if titlebar.buffer.is_some() {

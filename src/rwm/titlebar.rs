@@ -10,20 +10,29 @@ use wayland_client::QueueHandle;
 /// Titlebar height in pixels
 pub const TITLEBAR_HEIGHT: i32 = 24;
 
+/// Total border width in pixels (1px black, 3px gray, 1px black)
+pub const BORDER_WIDTH: i32 = 5;
+
 /// Font size for titlebar text
 const FONT_SIZE: f32 = 14.0;
 
-/// Background color for active window titlebar (yellow)
-const BG_COLOR_ACTIVE: u32 = 0xFFDD00FF;
+/// Background color for active window titlebar (blue)
+const BG_COLOR_ACTIVE: u32 = 0x2F6BFFFF;
 
-/// Background color for inactive window titlebar (dark gray)
-const BG_COLOR_INACTIVE: u32 = 0x444444FF;
+/// Background color for inactive window titlebar (gray)
+const BG_COLOR_INACTIVE: u32 = 0x666666FF;
 
-/// Text color for active window (black)
-const TEXT_COLOR_ACTIVE: u32 = 0x000000FF;
+/// Text color for titlebar (white)
+const TEXT_COLOR: u32 = 0xFFFFFFFF;
 
-/// Text color for inactive window (light gray)
-const TEXT_COLOR_INACTIVE: u32 = 0xAAAAAAFF;
+/// Border colors
+const BORDER_COLOR_OUTER: u32 = 0x000000FF;
+const BORDER_COLOR_MID: u32 = 0x888888FF;
+const BORDER_COLOR_INNER: u32 = 0x000000FF;
+
+const BORDER_OUTER: i32 = 1;
+const BORDER_MID: i32 = 3;
+const BORDER_INNER: i32 = 1;
 
 /// Horizontal padding for title text
 const TITLE_PADDING: i32 = 8;
@@ -74,8 +83,14 @@ pub struct Titlebar {
     pub memfile: Option<std::fs::File>,
     /// Memory map pointer
     pub mmap: Option<memmap2::MmapMut>,
-    /// Current width
+    /// Current buffer width
     pub width: i32,
+    /// Current buffer height
+    pub height: i32,
+    /// Current content width
+    pub content_width: i32,
+    /// Current content height
+    pub content_height: i32,
     /// Whether titlebar needs redraw
     pub dirty: bool,
 }
@@ -91,6 +106,9 @@ impl Titlebar {
             memfile: None,
             mmap: None,
             width: 0,
+            height: 0,
+            content_width: 0,
+            content_height: 0,
             dirty: true,
         }
     }
@@ -98,22 +116,35 @@ impl Titlebar {
     /// Ensure buffer is allocated for the given width
     pub fn ensure_buffer<D: 'static>(
         &mut self,
-        width: i32,
+        content_width: i32,
+        content_height: i32,
         shm: &wl_shm::WlShm,
         qh: &QueueHandle<D>,
     ) where
         D: wayland_client::Dispatch<wl_shm_pool::WlShmPool, ()>
             + wayland_client::Dispatch<wl_buffer::WlBuffer, ()>,
     {
-        if width <= 0 {
-            log::info!("ensure_buffer: width <= 0, skipping");
+        if content_width <= 0 || content_height <= 0 {
+            log::info!("ensure_buffer: invalid content size, skipping");
             return;
         }
 
+        let width = content_width + BORDER_WIDTH * 2;
+        let height = content_height + BORDER_WIDTH * 2;
+
         // Check if we need a new buffer
-        if self.width != width || self.buffer.is_none() {
-            log::info!("ensure_buffer: creating new buffer for width={}", width);
+        if self.width != width || self.height != height || self.buffer.is_none() {
+            log::info!(
+                "ensure_buffer: creating new buffer for {}x{} (content {}x{})",
+                width,
+                height,
+                content_width,
+                content_height
+            );
             self.width = width;
+            self.height = height;
+            self.content_width = content_width;
+            self.content_height = content_height;
             self.dirty = true;
 
             // Clean up old buffer
@@ -126,7 +157,7 @@ impl Titlebar {
 
             // Calculate buffer size (ARGB8888 = 4 bytes per pixel)
             let stride = width * 4;
-            let size = stride * TITLEBAR_HEIGHT;
+            let size = stride * height;
             log::debug!("ensure_buffer: stride={}, size={}", stride, size);
 
             // Create memfd for shared memory
@@ -163,7 +194,7 @@ impl Titlebar {
             let buffer = pool.create_buffer(
                 0,
                 width,
-                TITLEBAR_HEIGHT,
+                height,
                 stride,
                 wl_shm::Format::Argb8888,
                 qh,
@@ -184,7 +215,41 @@ impl Titlebar {
     pub fn render(&mut self, title: Option<&str>, is_active: bool) {
         if let Some(ref mut mmap) = self.mmap {
             let width = self.width;
-            let height = TITLEBAR_HEIGHT;
+            let height = self.height;
+            let content_width = self.content_width;
+            let content_height = self.content_height;
+            if width <= 0 || height <= 0 || content_width <= 0 || content_height <= 0 {
+                return;
+            }
+
+            let pixels = mmap.as_mut();
+            clear_buffer(pixels);
+
+            let border_offset = 0;
+            draw_border_layer(
+                pixels,
+                width,
+                height,
+                border_offset,
+                BORDER_OUTER,
+                BORDER_COLOR_OUTER,
+            );
+            draw_border_layer(
+                pixels,
+                width,
+                height,
+                border_offset + BORDER_OUTER,
+                BORDER_MID,
+                BORDER_COLOR_MID,
+            );
+            draw_border_layer(
+                pixels,
+                width,
+                height,
+                border_offset + BORDER_OUTER + BORDER_MID,
+                BORDER_INNER,
+                BORDER_COLOR_INNER,
+            );
 
             // Choose background color based on active state
             let bg_color = if is_active {
@@ -194,21 +259,35 @@ impl Titlebar {
             };
             let bg_argb = rgba_to_argb(bg_color);
 
-            // Fill the entire buffer with background
-            let pixels = mmap.as_mut();
-            for y in 0..height {
-                for x in 0..width {
-                    let offset = ((y * width + x) * 4) as usize;
-                    if offset + 4 <= pixels.len() {
-                        pixels[offset..offset + 4].copy_from_slice(&bg_argb.to_ne_bytes());
-                    }
-                }
-            }
+            let title_height = TITLEBAR_HEIGHT.min(content_height);
+            if title_height > 0 {
+                let title_x = BORDER_WIDTH;
+                let title_y = BORDER_WIDTH;
+                fill_rect(
+                    pixels,
+                    width,
+                    height,
+                    title_x,
+                    title_y,
+                    content_width,
+                    title_height,
+                    bg_argb,
+                );
 
-            // Render title text if we have a title and font
-            if let Some(title_str) = title {
-                if !title_str.is_empty() {
-                    render_title(pixels, width, height, title_str, is_active);
+                // Render title text if we have a title and font
+                if let Some(title_str) = title {
+                    if !title_str.is_empty() {
+                        render_title(
+                            pixels,
+                            width,
+                            height,
+                            title_str,
+                            title_x,
+                            title_y,
+                            content_width,
+                            title_height,
+                        );
+                    }
                 }
             }
 
@@ -220,7 +299,7 @@ impl Titlebar {
     pub fn commit(&self) {
         if let Some(ref buffer) = self.buffer {
             self.surface.attach(Some(buffer), 0, 0);
-            self.surface.damage_buffer(0, 0, self.width, TITLEBAR_HEIGHT);
+            self.surface.damage_buffer(0, 0, self.width, self.height);
             self.surface.commit();
         }
     }
@@ -237,28 +316,33 @@ impl Titlebar {
 }
 
 /// Render the title text onto the titlebar pixels
-fn render_title(pixels: &mut [u8], width: i32, height: i32, title: &str, is_active: bool) {
+fn render_title(
+    pixels: &mut [u8],
+    buffer_width: i32,
+    buffer_height: i32,
+    title: &str,
+    origin_x: i32,
+    origin_y: i32,
+    area_width: i32,
+    area_height: i32,
+) {
     let font = match get_font() {
         Some(f) => f,
         None => return,
     };
 
-    let text_color = if is_active {
-        TEXT_COLOR_ACTIVE
-    } else {
-        TEXT_COLOR_INACTIVE
-    };
-    let text_argb = rgba_to_argb(text_color);
+    let text_argb = rgba_to_argb(TEXT_COLOR);
 
     // Calculate metrics for vertical centering
     let metrics = font.metrics('A', FONT_SIZE);
-    let baseline_y = (height as f32 + metrics.height as f32) / 2.0
+    let baseline_y = origin_y as f32
+        + (area_height as f32 + metrics.height as f32) / 2.0
         - metrics.height as f32
         + (metrics.ymin.abs() as f32);
 
     // Rasterize and draw each character
-    let mut x_pos = TITLE_PADDING as f32;
-    let max_x = width - TITLE_PADDING;
+    let mut x_pos = (origin_x + TITLE_PADDING) as f32;
+    let max_x = origin_x + area_width - TITLE_PADDING;
 
     for ch in title.chars() {
         let (metrics, bitmap) = font.rasterize(ch, FONT_SIZE);
@@ -278,10 +362,18 @@ fn render_title(pixels: &mut [u8], width: i32, height: i32, title: &str, is_acti
                 let px = glyph_x + col as i32;
                 let py = glyph_y + row as i32;
 
-                if px >= 0 && px < width && py >= 0 && py < height {
+                if px >= origin_x
+                    && px < origin_x + area_width
+                    && py >= origin_y
+                    && py < origin_y + area_height
+                    && px >= 0
+                    && px < buffer_width
+                    && py >= 0
+                    && py < buffer_height
+                {
                     let alpha = bitmap[row * metrics.width + col];
                     if alpha > 0 {
-                        let offset = ((py * width + px) * 4) as usize;
+                        let offset = ((py * buffer_width + px) * 4) as usize;
                         if offset + 4 <= pixels.len() {
                             // Alpha blend the text onto the background
                             blend_pixel(&mut pixels[offset..offset + 4], text_argb, alpha);
@@ -329,6 +421,106 @@ fn blend_pixel(bg: &mut [u8], fg_argb: u32, alpha: u8) {
     // Write back (keep full alpha)
     let out_argb = 0xFF000000 | ((out_r as u32) << 16) | ((out_g as u32) << 8) | (out_b as u32);
     bg.copy_from_slice(&out_argb.to_ne_bytes());
+}
+
+fn clear_buffer(pixels: &mut [u8]) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        chunk.copy_from_slice(&[0, 0, 0, 0]);
+    }
+}
+
+fn fill_rect(
+    pixels: &mut [u8],
+    buffer_width: i32,
+    buffer_height: i32,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    color_argb: u32,
+) {
+    if width <= 0 || height <= 0 {
+        return;
+    }
+
+    let x0 = x.max(0);
+    let y0 = y.max(0);
+    let x1 = (x + width).min(buffer_width);
+    let y1 = (y + height).min(buffer_height);
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
+
+    let color_bytes = color_argb.to_ne_bytes();
+    for row in y0..y1 {
+        for col in x0..x1 {
+            let offset = ((row * buffer_width + col) * 4) as usize;
+            if offset + 4 <= pixels.len() {
+                pixels[offset..offset + 4].copy_from_slice(&color_bytes);
+            }
+        }
+    }
+}
+
+fn draw_border_layer(
+    pixels: &mut [u8],
+    buffer_width: i32,
+    buffer_height: i32,
+    offset: i32,
+    thickness: i32,
+    color: u32,
+) {
+    if thickness <= 0 {
+        return;
+    }
+
+    let layer_width = buffer_width - offset * 2;
+    let layer_height = buffer_height - offset * 2;
+    if layer_width <= 0 || layer_height <= 0 {
+        return;
+    }
+
+    let argb = rgba_to_argb(color);
+    fill_rect(
+        pixels,
+        buffer_width,
+        buffer_height,
+        offset,
+        offset,
+        layer_width,
+        thickness,
+        argb,
+    );
+    fill_rect(
+        pixels,
+        buffer_width,
+        buffer_height,
+        offset,
+        offset + layer_height - thickness,
+        layer_width,
+        thickness,
+        argb,
+    );
+    fill_rect(
+        pixels,
+        buffer_width,
+        buffer_height,
+        offset,
+        offset + thickness,
+        thickness,
+        layer_height - thickness * 2,
+        argb,
+    );
+    fill_rect(
+        pixels,
+        buffer_width,
+        buffer_height,
+        offset + layer_width - thickness,
+        offset + thickness,
+        thickness,
+        layer_height - thickness * 2,
+        argb,
+    );
 }
 
 impl Drop for Titlebar {

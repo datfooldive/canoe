@@ -959,7 +959,6 @@ impl Context {
     /// Handle render_start event - position windows and set borders
     pub fn handle_render_start(&mut self) {
         let border_width = MUTABLE_CONFIG.read().unwrap().border_width;
-        let border_color = self.config.border_color;
 
         log::info!("render_start: {} windows, {} outputs, current_output={:?}, border_width={}",
             self.windows.len(), self.outputs.len(), self.current_output, border_width);
@@ -978,28 +977,10 @@ impl Context {
             if visible && !w.hidden {
                 w.show();
 
-                // Set borders
+                // Disable compositor borders; custom decoration handles borders.
                 let is_focused = self.focused_window == Some(*window_id);
-                let color = if is_focused {
-                    border_color.focus
-                } else {
-                    border_color.unfocus
-                };
-
-                // Extract RGBA components and scale to 32-bit (Wayland convention)
-                // 8-bit values (0-255) need to be scaled to 32-bit (0-0xFFFFFFFF)
-                let scale = |v: u32| -> u32 { v * 0x01010101 };
-                let r = scale((color >> 24) & 0xff);
-                let g = scale((color >> 16) & 0xff);
-                let b = scale((color >> 8) & 0xff);
-                let a = scale(color & 0xff);
-
-                log::info!("Window {} SETTING BORDERS: focused={} color={:#010x} rgba=({:#x},{:#x},{:#x},{:#x}) width={}",
-                    window_id, is_focused, color, r, g, b, a, border_width);
-
-                // All edges
                 let edges = Edges::all();
-                w.set_borders(edges, border_width, r, g, b, a);
+                w.set_borders(edges, 0, 0, 0, 0, 0);
 
                 // Raise focused window
                 if is_focused {

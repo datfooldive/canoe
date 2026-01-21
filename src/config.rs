@@ -243,7 +243,7 @@ impl Default for MutableConfig {
             grid: GridConfig::default(),
             monocle: MonocleConfig::default(),
             scroller: ScrollerConfig::default(),
-            border_width: 10,  // Fat yellow border
+            border_width: 5,  // 5px layered border
             auto_swallow: true,
         }
     }
