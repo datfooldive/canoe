@@ -333,12 +333,16 @@ fn render_title(
 
     let text_argb = rgba_to_argb(TEXT_COLOR);
 
-    // Calculate metrics for vertical centering
-    let metrics = font.metrics('A', FONT_SIZE);
-    let baseline_y = origin_y as f32
-        + (area_height as f32 + metrics.height as f32) / 2.0
-        - metrics.height as f32
-        + (metrics.ymin.abs() as f32);
+    // Calculate baseline for vertical centering across glyphs.
+    let baseline_y = if let Some(line_metrics) = font.horizontal_line_metrics(FONT_SIZE) {
+        let line_height = line_metrics.ascent - line_metrics.descent;
+        origin_y as f32 + (area_height as f32 - line_height) / 2.0 + line_metrics.ascent
+    } else {
+        let metrics = font.metrics('A', FONT_SIZE);
+        origin_y as f32
+            + (area_height as f32 - metrics.height as f32) / 2.0
+            + (metrics.ymin as f32 + metrics.height as f32)
+    };
 
     // Rasterize and draw each character
     let mut x_pos = (origin_x + TITLE_PADDING) as f32;
@@ -354,7 +358,7 @@ fn render_title(
 
         // Calculate position
         let glyph_x = x_pos as i32 + metrics.xmin;
-        let glyph_y = baseline_y as i32 - metrics.ymin;
+        let glyph_y = baseline_y as i32 - (metrics.ymin + metrics.height as i32);
 
         // Draw the glyph
         for row in 0..metrics.height {
