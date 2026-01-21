@@ -247,9 +247,10 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                                 titlebar.render(title.as_deref(), is_focused);
                                 log::info!("Window {} titlebar rendered, focused={}", window_id, is_focused);
 
-                                // Position decoration so the border wraps the window
+                                // Position decoration so it sits above content with borders
                                 let border_width = rwm::titlebar::BORDER_WIDTH;
-                                titlebar.set_offset(-border_width, -border_width);
+                                let titlebar_height = rwm::titlebar::TITLEBAR_HEIGHT;
+                                titlebar.set_offset(-border_width, -border_width - titlebar_height);
 
                                 // Sync and commit (only if we have a buffer)
                                 if titlebar.buffer.is_some() {

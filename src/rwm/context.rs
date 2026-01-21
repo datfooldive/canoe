@@ -782,12 +782,18 @@ impl Context {
             (w.x, w.y, w.width, w.height, w.titlebar.is_some())
         };
 
+        let border_width = super::titlebar::BORDER_WIDTH;
+        let titlebar_height = super::titlebar::TITLEBAR_HEIGHT;
+        let frame_x = x - border_width;
+        let frame_y = y - border_width - titlebar_height;
+        let frame_width = width + border_width * 2;
+        let frame_height = height + border_width * 2 + titlebar_height;
         let edges = calculate_resize_edges_near_border(
-            x,
-            y,
-            width,
-            height,
-            super::titlebar::BORDER_WIDTH,
+            frame_x,
+            frame_y,
+            frame_width,
+            frame_height,
+            border_width,
             px,
             py,
         );
@@ -803,9 +809,7 @@ impl Context {
             return;
         }
 
-        if has_titlebar
-            && point_in_titlebar(x, y, width, super::titlebar::TITLEBAR_HEIGHT, px, py)
-        {
+        if has_titlebar && point_in_titlebar(x, y, width, titlebar_height, px, py) {
             let mut w = window.borrow_mut();
             w.floating = true;
             w.start_move(Rc::downgrade(&seat));
@@ -1207,12 +1211,18 @@ impl Context {
                         let seat_ref = seat.borrow();
                         (seat_ref.pointer_x, seat_ref.pointer_y)
                     };
+                    let border_width = super::titlebar::BORDER_WIDTH;
+                    let titlebar_height = super::titlebar::TITLEBAR_HEIGHT;
+                    let frame_x = w.x - border_width;
+                    let frame_y = w.y - border_width - titlebar_height;
+                    let frame_width = w.width + border_width * 2;
+                    let frame_height = w.height + border_width * 2 + titlebar_height;
                     edges = calculate_resize_edges_near_border(
-                        w.x,
-                        w.y,
-                        w.width,
-                        w.height,
-                        super::titlebar::BORDER_WIDTH,
+                        frame_x,
+                        frame_y,
+                        frame_width,
+                        frame_height,
+                        border_width,
                         px,
                         py,
                     );
@@ -1359,5 +1369,5 @@ fn point_in_titlebar(
         return false;
     }
 
-    px >= x && px <= x + width && py >= y && py <= y + titlebar_height
+    px >= x && px <= x + width && py >= y - titlebar_height && py <= y
 }

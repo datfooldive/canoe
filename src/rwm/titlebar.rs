@@ -130,7 +130,7 @@ impl Titlebar {
         }
 
         let width = content_width + BORDER_WIDTH * 2;
-        let height = content_height + BORDER_WIDTH * 2;
+        let height = content_height + TITLEBAR_HEIGHT + BORDER_WIDTH * 2;
 
         // Check if we need a new buffer
         if self.width != width || self.height != height || self.buffer.is_none() {
@@ -259,7 +259,7 @@ impl Titlebar {
             };
             let bg_argb = rgba_to_argb(bg_color);
 
-            let title_height = TITLEBAR_HEIGHT.min(content_height);
+            let title_height = TITLEBAR_HEIGHT.min(height - BORDER_WIDTH * 2);
             if title_height > 0 {
                 let title_x = BORDER_WIDTH;
                 let title_y = BORDER_WIDTH;
