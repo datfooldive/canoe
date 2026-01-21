@@ -190,10 +190,10 @@ pub fn default_xkb_bindings() -> Vec<(Mode, u32, u32, Action)> {
         // Spawn launcher
         (
             Mode::Default,
-            Keysym::p.raw(),
+            Keysym::space.raw(),
             alt,
             Action::SpawnShell {
-                cmd: "wmenu-run".to_string(),
+                cmd: "fuzzel".to_string(),
             },
         ),
     ]

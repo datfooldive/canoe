@@ -24,7 +24,7 @@ RUST_LOG=info river -c ./target/release/rwm
 | Shortcut | Action |
 |----------|--------|
 | `Alt+Shift+Return` | Open terminal (foot) |
-| `Alt+p` | Open application launcher (wmenu-run) |
+| `Alt+Space` | Open application launcher (fuzzel) |
 | `Alt+Shift+c` | Close focused window |
 | `Alt+Shift+q` | Quit RWM |
 | `Alt+Tab` | Focus next window |
@@ -54,7 +54,7 @@ RUST_LOG=info river -c ./target/release/rwm
 
 - River compositor
 - foot terminal (for Alt+Shift+Return)
-- wmenu (for Alt+p launcher)
+- fuzzel (for Alt+Space launcher)
 
 ## License
 
