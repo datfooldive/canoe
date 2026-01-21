@@ -6,6 +6,7 @@ use crate::layout::{self, LayoutArea, LayoutWindow};
 use crate::protocol::river_window_management_v1::client::river_window_v1::Edges;
 use crate::protocol::*;
 use crate::rule;
+use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape as CursorShape;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -735,18 +736,24 @@ impl Context {
         if let Some(window_id) = self.focused_window {
             if let Some(window) = self.windows.get(&window_id) {
                 if let Some(seat) = self.seats.get(&seat_id) {
-                    let mut w = window.borrow_mut();
-                    w.floating = true; // Make floating if not already
+                    let edges = {
+                        let mut w = window.borrow_mut();
+                        w.floating = true; // Make floating if not already
 
-                    // Determine edges based on pointer position relative to window
-                    let seat_ref = seat.borrow();
-                    let px = seat_ref.pointer_x;
-                    let py = seat_ref.pointer_y;
-                    drop(seat_ref);
+                        // Determine edges based on pointer position relative to window
+                        let seat_ref = seat.borrow();
+                        let px = seat_ref.pointer_x;
+                        let py = seat_ref.pointer_y;
+                        drop(seat_ref);
 
-                    let edges = calculate_resize_edges(&w, px, py);
-                    w.start_resize(Rc::downgrade(seat), edges);
+                        let edges = calculate_resize_edges(&w, px, py);
+                        w.start_resize(Rc::downgrade(seat), edges);
+                        edges
+                    };
                     seat.borrow().start_pointer_op();
+                    if edges != 0 {
+                        self.update_cursor_for_seat(seat_id);
+                    }
                 }
             }
         }
@@ -784,10 +791,13 @@ impl Context {
         );
 
         if edges != 0 {
-            let mut w = window.borrow_mut();
-            w.floating = true;
-            w.start_resize(Rc::downgrade(&seat), edges);
+            {
+                let mut w = window.borrow_mut();
+                w.floating = true;
+                w.start_resize(Rc::downgrade(&seat), edges);
+            }
             seat.borrow().start_pointer_op();
+            self.update_cursor_for_seat(seat_id);
             return;
         }
 
@@ -1054,6 +1064,55 @@ impl Context {
             rwm.render_finish();
         }
     }
+
+    /// Update the cursor shape based on resize state or border hover.
+    pub fn update_cursor_for_seat(&mut self, seat_id: SeatId) {
+        let seat = match self.seats.get(&seat_id) {
+            Some(seat) => seat.clone(),
+            None => return,
+        };
+
+        let mut edges = 0u32;
+
+        if let Some(window_id) = self.focused_window {
+            if let Some(window) = self.windows.get(&window_id) {
+                if let super::window::Operator::Resize { edges: op_edges, seat: Some(op_seat), .. } =
+                    &window.borrow().operator
+                {
+                    if let Some(op_seat) = op_seat.upgrade() {
+                        if op_seat.borrow().id == seat_id {
+                            edges = *op_edges;
+                        }
+                    }
+                }
+            }
+        }
+
+        if edges == 0 {
+            let window_below = seat.borrow().window_below_pointer.clone();
+            if let Some(weak) = window_below {
+                if let Some(window) = weak.upgrade() {
+                    let w = window.borrow();
+                    let (px, py) = {
+                        let seat_ref = seat.borrow();
+                        (seat_ref.pointer_x, seat_ref.pointer_y)
+                    };
+                    edges = calculate_resize_edges_near_border(
+                        w.x,
+                        w.y,
+                        w.width,
+                        w.height,
+                        super::titlebar::BORDER_WIDTH,
+                        px,
+                        py,
+                    );
+                }
+            }
+        }
+
+        let shape = cursor_shape_for_edges(edges);
+        seat.borrow_mut().set_cursor_shape(shape);
+    }
 }
 
 impl Default for Context {
@@ -1135,6 +1194,47 @@ fn calculate_resize_edges_near_border(
     }
 
     edges
+}
+
+fn cursor_shape_for_edges(edges: u32) -> Option<CursorShape> {
+    let horiz = edges & (4 | 8);
+    let vert = edges & (1 | 2);
+
+    if horiz == 4 && vert == 1 {
+        return Some(CursorShape::NwResize);
+    }
+    if horiz == 8 && vert == 1 {
+        return Some(CursorShape::NeResize);
+    }
+    if horiz == 4 && vert == 2 {
+        return Some(CursorShape::SwResize);
+    }
+    if horiz == 8 && vert == 2 {
+        return Some(CursorShape::SeResize);
+    }
+    if horiz == 4 && vert == 0 {
+        return Some(CursorShape::WResize);
+    }
+    if horiz == 8 && vert == 0 {
+        return Some(CursorShape::EResize);
+    }
+    if horiz == 0 && vert == 1 {
+        return Some(CursorShape::NResize);
+    }
+    if horiz == 0 && vert == 2 {
+        return Some(CursorShape::SResize);
+    }
+    if horiz == 12 && vert == 0 {
+        return Some(CursorShape::EwResize);
+    }
+    if horiz == 0 && vert == 3 {
+        return Some(CursorShape::NsResize);
+    }
+    if horiz == 12 && vert == 3 {
+        return Some(CursorShape::AllResize);
+    }
+
+    None
 }
 
 fn point_in_titlebar(

@@ -13,6 +13,7 @@ use protocol::*;
 use rwm::Context;
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::os::fd::{AsFd, AsRawFd};
 use std::rc::Rc;
 
@@ -20,8 +21,12 @@ use nix::poll::{poll, PollFd, PollFlags};
 use nix::sys::signal::{SigSet, Signal};
 use nix::sys::signalfd::{SfdFlags, SignalFd};
 
-use wayland_client::protocol::{wl_buffer, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_surface};
+use wayland_client::protocol::{
+    wl_buffer, wl_compositor, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
+};
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle};
+use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::WpCursorShapeDeviceV1;
+use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1;
 
 /// Application state for Wayland dispatch
 struct AppState {
@@ -39,6 +44,54 @@ struct Globals {
     rwm_layer_shell: Option<RiverLayerShellV1>,
     rwm_input_manager: Option<RiverInputManagerV1>,
     rwm_libinput_config: Option<RiverLibinputConfigV1>,
+    cursor_shape_manager: Option<WpCursorShapeManagerV1>,
+    wl_seats: HashMap<u32, wl_seat::WlSeat>,
+}
+
+fn attach_wl_seat(
+    state: &mut AppState,
+    seat_ref: &Rc<RefCell<rwm::Seat>>,
+    qh: &QueueHandle<AppState>,
+) {
+    let wl_seat_name = seat_ref.borrow().wl_seat_name;
+    if wl_seat_name == 0 || seat_ref.borrow().wl_seat.is_some() {
+        return;
+    }
+    let wl_seat = match state.globals.wl_seats.get(&wl_seat_name) {
+        Some(seat) => seat.clone(),
+        None => return,
+    };
+
+    {
+        let mut seat = seat_ref.borrow_mut();
+        seat.wl_seat = Some(wl_seat.clone());
+        if seat.wl_pointer.is_none() {
+            let wl_pointer = wl_seat.get_pointer(qh, seat.id);
+            seat.wl_pointer = Some(wl_pointer);
+        }
+    }
+
+    attach_cursor_shape_device(state, seat_ref, qh);
+}
+
+fn attach_cursor_shape_device(
+    state: &mut AppState,
+    seat_ref: &Rc<RefCell<rwm::Seat>>,
+    qh: &QueueHandle<AppState>,
+) {
+    let manager = match state.globals.cursor_shape_manager.as_ref() {
+        Some(manager) => manager,
+        None => return,
+    };
+    let wl_pointer = match seat_ref.borrow().wl_pointer.as_ref() {
+        Some(pointer) => pointer.clone(),
+        None => return,
+    };
+    if seat_ref.borrow().cursor_shape_device.is_some() {
+        return;
+    }
+    let device: WpCursorShapeDeviceV1 = manager.get_pointer(&wl_pointer, qh, ());
+    seat_ref.borrow_mut().cursor_shape_device = Some(device);
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
@@ -68,6 +121,25 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
                     let shm: wl_shm::WlShm = registry.bind(name, version.min(1), qh, ());
                     state.globals.shm = Some(shm);
                 }
+                "wl_seat" => {
+                    log::info!("Binding wl_seat v{}", version.min(7));
+                    let seat: wl_seat::WlSeat = registry.bind(name, version.min(7), qh, name);
+                    state.globals.wl_seats.insert(name, seat);
+
+                    let seats: Vec<_> = state
+                        .context
+                        .borrow()
+                        .seats
+                        .values()
+                        .cloned()
+                        .collect();
+                    for seat_ref in seats {
+                        if seat_ref.borrow().wl_seat_name == name {
+                            attach_wl_seat(state, &seat_ref, qh);
+                            break;
+                        }
+                    }
+                }
                 "river_window_manager_v1" => {
                     let rwm: RiverWindowManagerV1 =
                         registry.bind(name, version.min(2), qh, ());
@@ -93,6 +165,22 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
                     let lc: RiverLibinputConfigV1 = registry.bind(name, version.min(1), qh, ());
                     state.globals.rwm_libinput_config = Some(lc.clone());
                     state.context.borrow_mut().rwm_libinput_config = Some(lc);
+                }
+                "wp_cursor_shape_manager_v1" => {
+                    log::info!("Binding wp_cursor_shape_manager_v1 v{}", version.min(2));
+                    let manager: WpCursorShapeManagerV1 =
+                        registry.bind(name, version.min(2), qh, ());
+                    state.globals.cursor_shape_manager = Some(manager);
+                    let seats: Vec<_> = state
+                        .context
+                        .borrow()
+                        .seats
+                        .values()
+                        .cloned()
+                        .collect();
+                    for seat_ref in seats {
+                        attach_cursor_shape_device(state, &seat_ref, qh);
+                    }
                 }
                 _ => {}
             }
@@ -333,7 +421,7 @@ impl Dispatch<RiverWindowV1, rwm::WindowId> for AppState {
         event: river_window_management_v1::client::river_window_v1::Event,
         _window_id: &rwm::WindowId, // Don't use this - it's always 0 from event_created_child
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
         use river_window_management_v1::client::river_window_v1::Event;
 
@@ -457,7 +545,7 @@ impl Dispatch<RiverNodeV1, rwm::WindowId> for AppState {
         _event: river_window_management_v1::client::river_node_v1::Event,
         _data: &rwm::WindowId,
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
         // Node events would be handled here if needed
     }
@@ -471,7 +559,7 @@ impl Dispatch<RiverOutputV1, rwm::OutputId> for AppState {
         event: river_window_management_v1::client::river_output_v1::Event,
         output_id: &rwm::OutputId,
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
         use river_window_management_v1::client::river_output_v1::Event;
 
@@ -508,7 +596,7 @@ impl Dispatch<RiverSeatV1, rwm::SeatId> for AppState {
         event: river_window_management_v1::client::river_seat_v1::Event,
         seat_id: &rwm::SeatId,
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
         use river_window_management_v1::client::river_seat_v1::Event;
 
@@ -525,6 +613,7 @@ impl Dispatch<RiverSeatV1, rwm::SeatId> for AppState {
             }
             Event::WlSeat { name } => {
                 seat.borrow_mut().wl_seat_name = name;
+                attach_wl_seat(state, &seat, qh);
             }
             Event::PointerEnter { window } => {
                 // Find the window
@@ -546,10 +635,12 @@ impl Dispatch<RiverSeatV1, rwm::SeatId> for AppState {
                     if sloppy_focus {
                         state.context.borrow_mut().focus(wid);
                     }
+                    state.context.borrow_mut().update_cursor_for_seat(*seat_id);
                 }
             }
             Event::PointerLeave => {
                 seat.borrow_mut().window_below_pointer = None;
+                state.context.borrow_mut().update_cursor_for_seat(*seat_id);
             }
             Event::WindowInteraction { window } => {
                 // Always focus the window on click/interaction
@@ -582,9 +673,12 @@ impl Dispatch<RiverSeatV1, rwm::SeatId> for AppState {
                     }
                 }
                 seat.borrow().end_pointer_op();
+                drop(context);
+                state.context.borrow_mut().update_cursor_for_seat(*seat_id);
             }
             Event::PointerPosition { x, y } => {
                 seat.borrow_mut().update_pointer_position(x, y);
+                state.context.borrow_mut().update_cursor_for_seat(*seat_id);
             }
             _ => {}
         }
@@ -870,6 +964,75 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for AppState {
         if let wl_buffer::Event::Release = event {
             // Buffer is no longer in use by compositor
         }
+    }
+}
+
+impl Dispatch<wl_seat::WlSeat, u32> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_seat::WlSeat,
+        _event: wl_seat::Event,
+        _data: &u32,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // wl_seat events are not needed; river provides seat information.
+    }
+}
+
+impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
+    fn event(
+        state: &mut Self,
+        _proxy: &wl_pointer::WlPointer,
+        event: wl_pointer::Event,
+        seat_id: &rwm::SeatId,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        let seat = {
+            let context = state.context.borrow();
+            context.seats.get(seat_id).cloned()
+        };
+        if let Some(seat) = seat {
+            match event {
+                wl_pointer::Event::Enter { serial, .. } => {
+                    seat.borrow_mut().pointer_enter_serial = serial;
+                    state.context.borrow_mut().update_cursor_for_seat(*seat_id);
+                }
+                wl_pointer::Event::Leave { serial, .. } => {
+                    let mut seat = seat.borrow_mut();
+                    seat.pointer_enter_serial = serial;
+                    seat.cursor_shape = None;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+impl Dispatch<WpCursorShapeManagerV1, ()> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &WpCursorShapeManagerV1,
+        _event: wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // Cursor shape manager has no events.
+    }
+}
+
+impl Dispatch<WpCursorShapeDeviceV1, ()> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &WpCursorShapeDeviceV1,
+        _event: wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // Cursor shape device has no events.
     }
 }
 

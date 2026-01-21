@@ -8,7 +8,11 @@ use crate::protocol::{
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Weak;
+use wayland_client::protocol::wl_pointer::WlPointer;
 use wayland_client::protocol::wl_seat::WlSeat;
+use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::{
+    Shape as CursorShape, WpCursorShapeDeviceV1,
+};
 
 /// Seat identifier
 pub type SeatId = usize;
@@ -25,6 +29,14 @@ pub struct Seat {
     pub wl_seat: Option<WlSeat>,
     /// Global name of the wl_seat
     pub wl_seat_name: u32,
+    /// Wayland pointer object
+    pub wl_pointer: Option<WlPointer>,
+    /// Cursor shape device for this seat
+    pub cursor_shape_device: Option<WpCursorShapeDeviceV1>,
+    /// Last pointer enter serial for cursor shape updates
+    pub pointer_enter_serial: u32,
+    /// Last cursor shape set for this seat
+    pub cursor_shape: Option<CursorShape>,
 
     /// Current input mode
     pub mode: Mode,
@@ -59,6 +71,10 @@ impl Seat {
             layer_shell_seat: None,
             wl_seat: None,
             wl_seat_name: 0,
+            wl_pointer: None,
+            cursor_shape_device: None,
+            pointer_enter_serial: 0,
+            cursor_shape: None,
             mode: Mode::Default,
             focus_exclusive: false,
             pointer_x: 0,
@@ -166,6 +182,25 @@ impl Seat {
         if let Some(ref rwm_seat) = self.rwm_seat {
             rwm_seat.set_xcursor_theme(name.to_string(), size);
         }
+    }
+
+    /// Set cursor shape if supported by the compositor
+    pub fn set_cursor_shape(&mut self, shape: Option<CursorShape>) {
+        let device = match self.cursor_shape_device.as_ref() {
+            Some(device) => device,
+            None => return,
+        };
+        if self.pointer_enter_serial == 0 {
+            return;
+        }
+
+        let desired = shape.unwrap_or(CursorShape::Default);
+        if self.cursor_shape == Some(desired) {
+            return;
+        }
+
+        device.set_shape(self.pointer_enter_serial, desired);
+        self.cursor_shape = Some(desired);
     }
 
     /// Add an XKB binding
