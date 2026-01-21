@@ -47,12 +47,14 @@ const ITEM_PADDING_Y: i32 = 4;
 const ICON_SIZE: i32 = 10;
 const ICON_GAP: i32 = 6;
 const ACTIVE_DIAMOND_SIZE: i32 = 8;
+const SHADOW_SIZE: i32 = 3;
 
 const BG_COLOR_MENU: u32 = 0xC0C0C0FF;
 const BG_COLOR_ACTIVE: u32 = 0x2F6BFFFF;
 const TEXT_COLOR_NORMAL: u32 = 0x000000FF;
 const TEXT_COLOR_ACTIVE: u32 = 0xFFFFFFFF;
 const BORDER_COLOR: u32 = 0x000000FF;
+const SHADOW_COLOR: u32 = 0x404040FF;
 
 impl WindowMenu {
     pub fn new(
@@ -83,10 +85,12 @@ impl WindowMenu {
     }
 
     pub fn item_at(&self, x: i32, y: i32) -> Option<usize> {
+        let content_w = self.menu_width();
+        let content_h = self.menu_height();
         let content_x = MENU_BORDER;
         let content_y = MENU_BORDER;
-        let content_w = self.width - MENU_BORDER * 2;
-        let content_h = self.height - MENU_BORDER * 2;
+        let content_w = content_w - MENU_BORDER * 2;
+        let content_h = content_h - MENU_BORDER * 2;
         if x < content_x || y < content_y || x >= content_x + content_w || y >= content_y + content_h
         {
             return None;
@@ -202,6 +206,12 @@ impl WindowMenu {
     }
 
     pub fn render(&mut self) {
+        let menu_w = self.menu_width();
+        let menu_h = self.menu_height();
+        if menu_w <= 0 || menu_h <= 0 {
+            return;
+        }
+
         let Some(ref mut mmap) = self.mmap else {
             return;
         };
@@ -209,24 +219,42 @@ impl WindowMenu {
         let pixels = mmap.as_mut();
         clear_buffer(pixels);
 
+        draw_shadow(
+            pixels,
+            self.width,
+            self.height,
+            menu_w,
+            menu_h,
+            rgba_to_argb(SHADOW_COLOR),
+        );
+
         fill_rect(
             pixels,
             self.width,
             self.height,
             0,
             0,
-            self.width,
-            self.height,
+            menu_w,
+            menu_h,
             rgba_to_argb(BG_COLOR_MENU),
         );
 
-        draw_border(pixels, self.width, self.height, rgba_to_argb(BORDER_COLOR));
+        draw_border_rect(
+            pixels,
+            self.width,
+            self.height,
+            0,
+            0,
+            menu_w,
+            menu_h,
+            rgba_to_argb(BORDER_COLOR),
+        );
 
         let item_h = item_height();
         let start_x = MENU_BORDER + ITEM_PADDING_X;
         let mut y = MENU_BORDER;
         let text_start_x = start_x + ICON_SIZE + ICON_GAP;
-        let text_area_w = self.width - MENU_BORDER * 2 - text_start_x + MENU_BORDER;
+        let text_area_w = menu_w - MENU_BORDER * 2 - text_start_x + MENU_BORDER;
 
         for (idx, item) in self.items.iter().enumerate() {
             let is_active = self.hovered == Some(idx);
@@ -246,7 +274,7 @@ impl WindowMenu {
                 rgba_to_argb(TEXT_COLOR_NORMAL)
             };
 
-            fill_rect(pixels, self.width, self.height, MENU_BORDER, y, self.width - MENU_BORDER * 2, item_h, bg);
+            fill_rect(pixels, self.width, self.height, MENU_BORDER, y, menu_w - MENU_BORDER * 2, item_h, bg);
 
             if item.hidden {
                 draw_dashed_rect(
@@ -295,12 +323,14 @@ impl WindowMenu {
     ) where
         D: wayland_client::Dispatch<wl_region::WlRegion, ()>,
     {
-        if self.width <= 0 || self.height <= 0 {
+        let menu_w = self.menu_width();
+        let menu_h = self.menu_height();
+        if menu_w <= 0 || menu_h <= 0 {
             return;
         }
 
         let region = compositor.create_region(qh, ());
-        region.add(0, 0, self.width, self.height);
+        region.add(0, 0, menu_w, menu_h);
         self.surface.set_input_region(Some(&region));
         region.destroy();
     }
@@ -311,6 +341,14 @@ impl WindowMenu {
             self.surface.damage_buffer(0, 0, self.width, self.height);
             self.surface.commit();
         }
+    }
+
+    fn menu_width(&self) -> i32 {
+        (self.width - SHADOW_SIZE).max(0)
+    }
+
+    fn menu_height(&self) -> i32 {
+        (self.height - SHADOW_SIZE).max(0)
     }
 }
 
@@ -335,7 +373,14 @@ fn item_height() -> i32 {
 fn measure_menu(items: &[MenuItem]) -> (i32, i32) {
     let font = match get_font() {
         Some(f) => f,
-        None => return (120, (items.len() as i32 * item_height()).max(1) + MENU_BORDER * 2),
+        None => {
+            let menu_w = 120;
+            let menu_h = (items.len() as i32 * item_height()).max(1) + MENU_BORDER * 2;
+            return (
+                menu_w + SHADOW_SIZE,
+                menu_h + SHADOW_SIZE,
+            );
+        }
     };
 
     let mut max_width = 0.0f32;
@@ -348,7 +393,12 @@ fn measure_menu(items: &[MenuItem]) -> (i32, i32) {
 
     let content_w = ITEM_PADDING_X * 2 + ICON_SIZE + ICON_GAP + max_width.ceil() as i32;
     let content_h = item_height() * items.len() as i32;
-    (content_w + MENU_BORDER * 2, content_h + MENU_BORDER * 2)
+    let menu_w = content_w + MENU_BORDER * 2;
+    let menu_h = content_h + MENU_BORDER * 2;
+    (
+        menu_w + SHADOW_SIZE,
+        menu_h + SHADOW_SIZE,
+    )
 }
 
 fn measure_text(font: &Font, text: &str) -> f32 {
@@ -520,27 +570,74 @@ fn fill_rect(
     }
 }
 
-fn draw_border(pixels: &mut [u8], buffer_width: i32, buffer_height: i32, color_argb: u32) {
-    fill_rect(pixels, buffer_width, buffer_height, 0, 0, buffer_width, 1, color_argb);
+fn draw_border_rect(
+    pixels: &mut [u8],
+    buffer_width: i32,
+    buffer_height: i32,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    color_argb: u32,
+) {
+    if width <= 0 || height <= 0 {
+        return;
+    }
+
+    fill_rect(pixels, buffer_width, buffer_height, x, y, width, 1, color_argb);
     fill_rect(
         pixels,
         buffer_width,
         buffer_height,
-        0,
-        buffer_height - 1,
-        buffer_width,
+        x,
+        y + height - 1,
+        width,
         1,
         color_argb,
     );
-    fill_rect(pixels, buffer_width, buffer_height, 0, 0, 1, buffer_height, color_argb);
+    fill_rect(pixels, buffer_width, buffer_height, x, y, 1, height, color_argb);
     fill_rect(
         pixels,
         buffer_width,
         buffer_height,
-        buffer_width - 1,
-        0,
+        x + width - 1,
+        y,
         1,
+        height,
+        color_argb,
+    );
+}
+
+fn draw_shadow(
+    pixels: &mut [u8],
+    buffer_width: i32,
+    buffer_height: i32,
+    menu_width: i32,
+    menu_height: i32,
+    color_argb: u32,
+) {
+    if menu_width <= 0 || menu_height <= 0 {
+        return;
+    }
+
+    fill_rect(
+        pixels,
+        buffer_width,
         buffer_height,
+        SHADOW_SIZE,
+        menu_height,
+        menu_width,
+        SHADOW_SIZE,
+        color_argb,
+    );
+    fill_rect(
+        pixels,
+        buffer_width,
+        buffer_height,
+        menu_width,
+        SHADOW_SIZE,
+        SHADOW_SIZE,
+        menu_height,
         color_argb,
     );
 }
