@@ -15,7 +15,7 @@ use std::process::{Command, Stdio};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use super::{MenuItem, Output, OutputId, Seat, SeatId, Window, WindowId, WindowMenu};
+use super::{MenuItem, Output, OutputId, Seat, SeatId, Window, WindowId, WindowMenu, WindowMenuMode};
 
 /// The central window manager context
 pub struct Context {
@@ -57,6 +57,8 @@ pub struct Context {
 
     /// Window menu surface and state
     pub window_menu: Option<WindowMenu>,
+    pub window_menu_mode: Option<WindowMenuMode>,
+    pub window_menu_shield: Option<super::ShieldSurface>,
 }
 
 impl Context {
@@ -91,6 +93,8 @@ impl Context {
 
             terminal_windows: HashMap::new(),
             window_menu: None,
+            window_menu_mode: None,
+            window_menu_shield: None,
         }
     }
 
@@ -195,8 +199,8 @@ impl Context {
         use crate::binding::action::{default_pointer_bindings, default_tag_bindings, default_xkb_bindings};
 
         // Add XKB bindings
-        for (mode, keysym, modifiers, action) in default_xkb_bindings() {
-            seat.add_xkb_binding(XkbBinding::new(mode, keysym, modifiers, action));
+        for (mode, keysym, modifiers, action, event) in default_xkb_bindings() {
+            seat.add_xkb_binding(XkbBinding::new(mode, keysym, modifiers, action).with_event(event));
         }
 
         // Add tag bindings
@@ -443,6 +447,22 @@ impl Context {
                     if let Some(output) = self.outputs.get(&output_id) {
                         output.borrow_mut().switch_to_previous_tag();
                         self.arrange_output(output_id);
+                    }
+                }
+            }
+            Action::WindowMenuCycle => {
+                if self.window_menu_mode == Some(WindowMenuMode::AltTab) {
+                    if let Some(menu) = self.window_menu.as_mut() {
+                        menu.select_next();
+                    }
+                }
+            }
+            Action::WindowMenuCommit => {
+                if self.window_menu_mode == Some(WindowMenuMode::AltTab) {
+                    if self.window_menu.as_ref().and_then(|menu| menu.hovered).is_some() {
+                        self.activate_menu_hovered();
+                    } else {
+                        self.close_window_menu();
                     }
                 }
             }
@@ -1390,6 +1410,8 @@ impl Context {
         };
         let window_id = menu.items.get(idx).map(|item| item.window_id);
         self.window_menu = None;
+        self.window_menu_mode = None;
+        self.window_menu_shield = None;
 
         let Some(window_id) = window_id else {
             return;
@@ -1410,10 +1432,15 @@ impl Context {
     /// Close the window menu if open.
     pub fn close_window_menu(&mut self) {
         self.window_menu = None;
+        self.window_menu_mode = None;
+        self.window_menu_shield = None;
     }
 
     /// Update the cursor shape based on resize state or border hover.
     pub fn update_cursor_for_seat(&mut self, seat_id: SeatId) {
+        if self.window_menu_mode == Some(WindowMenuMode::AltTab) {
+            return;
+        }
         let seat = match self.seats.get(&seat_id) {
             Some(seat) => seat.clone(),
             None => return,

@@ -250,6 +250,7 @@ pub enum PointerTarget {
     None,
     Desktop(OutputId),
     Menu,
+    MenuShield,
 }
 
 impl std::fmt::Debug for Seat {

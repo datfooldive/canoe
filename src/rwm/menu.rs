@@ -110,6 +110,30 @@ impl WindowMenu {
         false
     }
 
+    pub fn select_next(&mut self) -> bool {
+        if self.items.is_empty() {
+            return false;
+        }
+        let next = match self.hovered {
+            Some(idx) => (idx + 1) % self.items.len(),
+            None => 0,
+        };
+        if self.hovered != Some(next) {
+            self.hovered = Some(next);
+            return true;
+        }
+        false
+    }
+
+    pub fn select_window(&mut self, window_id: Option<WindowId>) -> bool {
+        let next = window_id.and_then(|id| self.items.iter().position(|item| item.window_id == id));
+        if self.hovered != next {
+            self.hovered = next;
+            return true;
+        }
+        false
+    }
+
     pub fn ensure_buffer<D: 'static>(&mut self, shm: &wl_shm::WlShm, qh: &QueueHandle<D>)
     where
         D: wayland_client::Dispatch<wl_shm_pool::WlShmPool, ()>

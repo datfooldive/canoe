@@ -124,6 +124,8 @@ fn open_window_menu(
     output_id: rwm::OutputId,
     pointer_x: i32,
     pointer_y: i32,
+    centered: bool,
+    mode: rwm::WindowMenuMode,
     qh: &QueueHandle<AppState>,
 ) {
     let (Some(compositor), Some(layer_shell)) = (
@@ -133,14 +135,15 @@ fn open_window_menu(
         return;
     };
 
-    let (items, output_info) = {
+    let (items, output_info, focused_window) = {
         let context = state.context.borrow();
         let items = context.collect_menu_items(output_id);
+        let focused = context.focused_window;
         let info = context.outputs.get(&output_id).map(|output| {
             let out = output.borrow();
             (out.width, out.height, out.wl_output.clone())
         });
-        (items, info)
+        (items, info, focused)
     };
 
     let Some((ow, oh, wl_output)) = output_info else {
@@ -163,14 +166,22 @@ fn open_window_menu(
 
     let mut menu =
         rwm::WindowMenu::new(surface, layer_surface, output_id, items, pointer_x, pointer_y);
+    if mode == rwm::WindowMenuMode::AltTab {
+        menu.select_window(focused_window);
+    }
     let mut local_x = pointer_x.max(0);
     let mut local_y = pointer_y.max(0);
     if ow > 0 && oh > 0 {
-        if local_x + menu.width > ow {
-            local_x = (ow - menu.width).max(0);
-        }
-        if local_y + menu.height > oh {
-            local_y = (oh - menu.height).max(0);
+        if centered {
+            local_x = ((ow - menu.width) / 2).max(0);
+            local_y = ((oh - menu.height) / 2).max(0);
+        } else {
+            if local_x + menu.width > ow {
+                local_x = (ow - menu.width).max(0);
+            }
+            if local_y + menu.height > oh {
+                local_y = (oh - menu.height).max(0);
+            }
         }
     }
 
@@ -188,6 +199,131 @@ fn open_window_menu(
 
     let mut context = state.context.borrow_mut();
     context.window_menu = Some(menu);
+    context.window_menu_mode = Some(mode);
+}
+
+fn ensure_window_menu_shield(
+    state: &mut AppState,
+    output_id: rwm::OutputId,
+    qh: &QueueHandle<AppState>,
+) {
+    let (Some(compositor), Some(layer_shell)) = (
+        state.globals.compositor.as_ref(),
+        state.globals.wlr_layer_shell.as_ref(),
+    ) else {
+        return;
+    };
+
+    let output = {
+        let context = state.context.borrow();
+        context.outputs.get(&output_id).cloned()
+    };
+    let Some(output) = output else {
+        return;
+    };
+
+    {
+        let mut context = state.context.borrow_mut();
+        if let Some(shield) = context.window_menu_shield.as_ref() {
+            if shield.output_id == output_id {
+                return;
+            }
+        }
+        context.window_menu_shield = None;
+    }
+
+    let wl_output = output.borrow().wl_output.clone();
+    let surface = compositor.create_surface(qh, ());
+    let layer_surface = layer_shell.get_layer_surface(
+        &surface,
+        wl_output.as_ref(),
+        wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer::Overlay,
+        "rwm-window-menu-shield".to_string(),
+        qh,
+        rwm::LayerSurfaceKind::MenuShield(output_id),
+    );
+
+    layer_surface.set_anchor(
+        wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Top
+            | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Bottom
+            | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Left
+            | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Right,
+    );
+    layer_surface.set_exclusive_zone(-1);
+    layer_surface.set_keyboard_interactivity(
+        wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::KeyboardInteractivity::None,
+    );
+    layer_surface.set_size(0, 0);
+    surface.commit();
+
+    state.context.borrow_mut().window_menu_shield =
+        Some(rwm::ShieldSurface::new(surface, layer_surface, output_id));
+}
+
+fn handle_window_menu_cycle(state: &mut AppState, qh: &QueueHandle<AppState>) {
+    let mut should_render = false;
+    let mut open_new = false;
+    let mut ensure_shield = None;
+
+    {
+        let mut context = state.context.borrow_mut();
+        let is_alt_tab = context.window_menu_mode == Some(rwm::WindowMenuMode::AltTab);
+        if let Some(menu) = context.window_menu.as_mut() {
+            if is_alt_tab {
+                if menu.select_next() {
+                    should_render = true;
+                }
+                ensure_shield = Some(menu.output_id);
+            } else {
+                context.close_window_menu();
+                open_new = true;
+            }
+        } else {
+            open_new = true;
+        }
+    }
+
+    if should_render {
+        render_window_menu(state, qh);
+    }
+
+    if let Some(output_id) = ensure_shield {
+        ensure_window_menu_shield(state, output_id, qh);
+    }
+
+    if !open_new {
+        return;
+    }
+
+    let output_id = {
+        let context = state.context.borrow();
+        context.current_output
+    };
+    let Some(output_id) = output_id else {
+        return;
+    };
+
+    open_window_menu(
+        state,
+        output_id,
+        0,
+        0,
+        true,
+        rwm::WindowMenuMode::AltTab,
+        qh,
+    );
+    ensure_window_menu_shield(state, output_id, qh);
+}
+
+fn handle_window_menu_commit(state: &mut AppState) {
+    let mut context = state.context.borrow_mut();
+    if context.window_menu_mode == Some(rwm::WindowMenuMode::AltTab) {
+        if context.window_menu.as_ref().and_then(|menu| menu.hovered).is_some() {
+            context.activate_menu_hovered();
+        } else {
+            context.close_window_menu();
+        }
+    }
 }
 
 fn ensure_desktop_surface(
@@ -925,6 +1061,32 @@ impl Dispatch<ZwlrLayerSurfaceV1, rwm::LayerSurfaceKind> for AppState {
                         drop(context);
                         render_window_menu(state, qh);
                     }
+                    rwm::LayerSurfaceKind::MenuShield(output_id) => {
+                        let mut context = state.context.borrow_mut();
+                        let Some(shield) = context.window_menu_shield.as_mut() else {
+                            return;
+                        };
+                        if shield.output_id != *output_id {
+                            return;
+                        }
+                        if width > 0
+                            && height > 0
+                            && (shield.width, shield.height) != (width as i32, height as i32)
+                        {
+                            shield.reset_buffer();
+                            shield.width = width as i32;
+                            shield.height = height as i32;
+                        }
+                        shield.configured = true;
+                        if let (Some(shm), Some(compositor)) =
+                            (state.globals.shm.as_ref(), state.globals.compositor.as_ref())
+                        {
+                            shield.ensure_buffer(shm, qh);
+                            shield.render();
+                            shield.update_input_region(compositor, qh);
+                            shield.commit();
+                        }
+                    }
                 }
             }
             Event::Closed => {
@@ -935,7 +1097,14 @@ impl Dispatch<ZwlrLayerSurfaceV1, rwm::LayerSurfaceKind> for AppState {
                         }
                     }
                     rwm::LayerSurfaceKind::Menu => {
-                        state.context.borrow_mut().window_menu = None;
+                        state.context.borrow_mut().close_window_menu();
+                    }
+                    rwm::LayerSurfaceKind::MenuShield(output_id) => {
+                        if let Some(shield) = state.context.borrow().window_menu_shield.as_ref() {
+                            if shield.output_id == *output_id {
+                                state.context.borrow_mut().window_menu_shield = None;
+                            }
+                        }
                     }
                 }
             }
@@ -1023,33 +1192,56 @@ impl Dispatch<RiverXkbBindingV1, (rwm::SeatId, usize)> for AppState {
         event: river_xkb_bindings_v1::client::river_xkb_binding_v1::Event,
         (seat_id, binding_idx): &(rwm::SeatId, usize),
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
         use river_xkb_bindings_v1::client::river_xkb_binding_v1::Event;
 
         log::debug!("XKB binding event: seat={}, binding_idx={}, event={:?}", seat_id, binding_idx, event);
 
-        if let Some(seat) = state.context.borrow().seats.get(seat_id) {
-            let seat = seat.clone();
-            let mut seat_ref = seat.borrow_mut();
+        let seat = match state.context.borrow().seats.get(seat_id) {
+            Some(seat) => seat.clone(),
+            None => return,
+        };
+        let (action, binding_event, enabled) = {
+            let seat_ref = seat.borrow();
+            let Some((binding, _)) = seat_ref.xkb_bindings.get(*binding_idx) else {
+                return;
+            };
+            let action = binding.action.clone();
+            log::info!(
+                "Binding triggered: keysym={:#x}, mods={:#x}, enabled={}, action={:?}",
+                binding.keysym,
+                binding.modifiers,
+                binding.enabled,
+                action
+            );
+            (action, binding.event, binding.enabled)
+        };
 
-            if let Some((binding, _)) = seat_ref.xkb_bindings.get(*binding_idx) {
-                let action = binding.action.clone();
-                log::info!("Binding triggered: keysym={:#x}, mods={:#x}, enabled={}, action={:?}",
-                    binding.keysym, binding.modifiers, binding.enabled, action);
-
-                match event {
-                    Event::Pressed => {
-                        if binding.enabled && binding.event == binding::BindingEvent::Pressed {
-                            log::info!("Executing action: {:?}", action);
-                            seat_ref.queue_action(action);
-                        }
+        match event {
+            Event::Pressed => {
+                if !enabled || binding_event != binding::BindingEvent::Pressed {
+                    return;
+                }
+                match action {
+                    binding::Action::WindowMenuCycle => {
+                        handle_window_menu_cycle(state, qh);
                     }
-                    Event::Released => {
-                        if binding.enabled && binding.event == binding::BindingEvent::Released {
-                            log::info!("Executing action (on release): {:?}", action);
-                            seat_ref.queue_action(action);
-                        }
+                    _ => {
+                        seat.borrow_mut().queue_action(action);
+                    }
+                }
+            }
+            Event::Released => {
+                if !enabled || binding_event != binding::BindingEvent::Released {
+                    return;
+                }
+                match action {
+                    binding::Action::WindowMenuCommit => {
+                        handle_window_menu_commit(state);
+                    }
+                    _ => {
+                        seat.borrow_mut().queue_action(action);
                     }
                 }
             }
@@ -1273,11 +1465,17 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                     surface_x,
                     surface_y,
                 } => {
+                    let wl_pointer = seat.borrow().wl_pointer.clone();
                     let mut target = rwm::PointerTarget::None;
 
                     let surface_pos = (surface_x.round() as i32, surface_y.round() as i32);
                     {
                         let mut context = state.context.borrow_mut();
+                        if let Some(shield) = context.window_menu_shield.as_ref() {
+                            if shield.surface == surface {
+                                target = rwm::PointerTarget::MenuShield;
+                            }
+                        }
                         if let Some(menu) = context.window_menu.as_mut() {
                             if menu.surface == surface {
                                 target = rwm::PointerTarget::Menu;
@@ -1312,7 +1510,13 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                         seat_ref.last_surface_x = surface_pos.0;
                         seat_ref.last_surface_y = surface_pos.1;
                     }
-                    state.context.borrow_mut().update_cursor_for_seat(*seat_id);
+                    if target == rwm::PointerTarget::MenuShield {
+                        if let Some(pointer) = wl_pointer.as_ref() {
+                            pointer.set_cursor(serial, None, 0, 0);
+                        }
+                    } else {
+                        state.context.borrow_mut().update_cursor_for_seat(*seat_id);
+                    }
                 }
                 wl_pointer::Event::Leave { serial, .. } => {
                     let mut seat = seat.borrow_mut();
@@ -1343,6 +1547,9 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                         return;
                     }
                     let target = seat.borrow().pointer_target;
+                    if target == rwm::PointerTarget::MenuShield {
+                        return;
+                    }
                     if target != rwm::PointerTarget::Menu {
                         let mut context = state.context.borrow_mut();
                         if context.window_menu.is_some() {
@@ -1362,7 +1569,15 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                                     context.close_window_menu();
                                 }
                                 drop(context);
-                                open_window_menu(state, output_id, px, py, _qh);
+                                open_window_menu(
+                                    state,
+                                    output_id,
+                                    px,
+                                    py,
+                                    false,
+                                    rwm::WindowMenuMode::Pointer,
+                                    _qh,
+                                );
                             }
                         }
                         rwm::PointerTarget::Menu => {
@@ -1370,6 +1585,7 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                                 state.context.borrow_mut().activate_menu_hovered();
                             }
                         }
+                        rwm::PointerTarget::MenuShield => {}
                         rwm::PointerTarget::None => {}
                     }
                 }

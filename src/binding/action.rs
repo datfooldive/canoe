@@ -124,6 +124,11 @@ pub enum Action {
     /// Switch to previous tag
     SwitchToPreviousTag,
 
+    /// Cycle window menu for Alt-Tab
+    WindowMenuCycle,
+    /// Activate selected window menu item for Alt-Tab
+    WindowMenuCommit,
+
     /// Custom function action
     CustomFn { func: CustomFn, arg: Arg },
 }
@@ -135,7 +140,7 @@ impl Default for Action {
 }
 
 /// Default keybindings configuration for stacking WM
-pub fn default_xkb_bindings() -> Vec<(Mode, u32, u32, Action)> {
+pub fn default_xkb_bindings() -> Vec<(Mode, u32, u32, Action, super::BindingEvent)> {
     use crate::config::modifiers::*;
     use xkbcommon::xkb::Keysym;
 
@@ -144,30 +149,16 @@ pub fn default_xkb_bindings() -> Vec<(Mode, u32, u32, Action)> {
 
     vec![
         // Essential window management
-        (Mode::Default, Keysym::q.raw(), alt | shift, Action::Quit),
-        (Mode::Default, Keysym::c.raw(), alt | shift, Action::Close),
-        (Mode::Default, Keysym::Down.raw(), alt, Action::HideFocused),
-        (Mode::Default, Keysym::Up.raw(), alt, Action::MaximizeFocused),
+        (Mode::Default, Keysym::q.raw(), alt | shift, Action::Quit, super::BindingEvent::Pressed),
+        (Mode::Default, Keysym::c.raw(), alt | shift, Action::Close, super::BindingEvent::Pressed),
+        (Mode::Default, Keysym::Down.raw(), alt, Action::HideFocused, super::BindingEvent::Pressed),
+        (Mode::Default, Keysym::Up.raw(), alt, Action::MaximizeFocused, super::BindingEvent::Pressed),
 
         // Focus navigation (cycle through windows)
-        (
-            Mode::Default,
-            Keysym::Tab.raw(),
-            alt,
-            Action::FocusIter {
-                direction: Direction::Forward,
-                skip_floating: false,
-            },
-        ),
-        (
-            Mode::Default,
-            Keysym::Tab.raw(),
-            alt | shift,
-            Action::FocusIter {
-                direction: Direction::Reverse,
-                skip_floating: false,
-            },
-        ),
+        (Mode::Default, Keysym::Tab.raw(), alt, Action::WindowMenuCycle, super::BindingEvent::Pressed),
+        (Mode::Default, Keysym::Tab.raw(), alt | shift, Action::WindowMenuCycle, super::BindingEvent::Pressed),
+        (Mode::Default, Keysym::Alt_L.raw(), 0, Action::WindowMenuCommit, super::BindingEvent::Released),
+        (Mode::Default, Keysym::Alt_R.raw(), 0, Action::WindowMenuCommit, super::BindingEvent::Released),
 
         // Fullscreen toggle
         (
@@ -175,6 +166,7 @@ pub fn default_xkb_bindings() -> Vec<(Mode, u32, u32, Action)> {
             Keysym::f.raw(),
             alt,
             Action::ToggleFullscreen { in_window: false },
+            super::BindingEvent::Pressed,
         ),
 
         // Spawn terminal
@@ -185,6 +177,7 @@ pub fn default_xkb_bindings() -> Vec<(Mode, u32, u32, Action)> {
             Action::Spawn {
                 argv: vec!["foot".to_string()],
             },
+            super::BindingEvent::Pressed,
         ),
 
         // Spawn launcher
@@ -195,6 +188,7 @@ pub fn default_xkb_bindings() -> Vec<(Mode, u32, u32, Action)> {
             Action::SpawnShell {
                 cmd: "fuzzel".to_string(),
             },
+            super::BindingEvent::Pressed,
         ),
     ]
 }
