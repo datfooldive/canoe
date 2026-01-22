@@ -255,6 +255,7 @@ pub enum PointerTarget {
     Desktop(OutputId),
     Menu,
     MenuShield(OutputId),
+    Titlebar(WindowId),
 }
 
 impl std::fmt::Debug for Seat {

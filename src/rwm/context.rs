@@ -13,7 +13,6 @@ use std::collections::HashMap;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
 
 use super::{MenuItem, Output, OutputId, Seat, SeatId, Window, WindowId, WindowMenu, WindowMenuMode};
 
@@ -813,8 +812,6 @@ impl Context {
 
     /// Start move/resize based on pointer location within the window frame
     pub fn handle_window_interaction(&mut self, seat_id: SeatId, window_id: WindowId) {
-        const CLOSE_DOUBLE_CLICK: Duration = Duration::from_millis(400);
-
         let seat = match self.seats.get(&seat_id) {
             Some(seat) => seat.clone(),
             None => return,
@@ -871,39 +868,10 @@ impl Context {
             if local_x >= 0 && local_x < width && local_y >= 0 && local_y < titlebar_height {
                 let buttons = super::titlebar::button_rects(width);
 
-                if buttons.close.contains(local_x, local_y) {
-                    let now = Instant::now();
-                    let should_close = {
-                        let mut seat_ref = seat.borrow_mut();
-                        let is_double = seat_ref
-                            .last_close_click
-                            .map(|(last_window, when)| {
-                                last_window == window_id && now.duration_since(when) <= CLOSE_DOUBLE_CLICK
-                            })
-                            .unwrap_or(false);
-                        seat_ref.last_close_click = Some((window_id, now));
-                        is_double
-                    };
-
-                    if should_close {
-                        window.borrow().close();
-                    }
-                    return;
-                }
-
-                seat.borrow_mut().last_close_click = None;
-
-                if buttons.hide.contains(local_x, local_y) {
-                    self.hide_window(window_id);
-                    return;
-                }
-
-                if buttons.maximize.contains(local_x, local_y) {
-                    if window.borrow().maximized {
-                        self.unmaximize_window(window_id);
-                    } else {
-                        self.maximize_window(window_id);
-                    }
+                if buttons.close.contains(local_x, local_y)
+                    || buttons.hide.contains(local_x, local_y)
+                    || buttons.maximize.contains(local_x, local_y)
+                {
                     return;
                 }
 
@@ -951,7 +919,7 @@ impl Context {
         }
     }
 
-    fn hide_window(&mut self, window_id: WindowId) {
+    pub(crate) fn hide_window(&mut self, window_id: WindowId) {
         let was_focused = self.focused_window == Some(window_id);
         if let Some(window) = self.windows.get(&window_id) {
             window.borrow_mut().hide();
@@ -1009,7 +977,7 @@ impl Context {
         }
     }
 
-    fn maximize_window(&mut self, window_id: WindowId) {
+    pub(crate) fn maximize_window(&mut self, window_id: WindowId) {
         let border_width = super::titlebar::BORDER_WIDTH;
         let titlebar_height = super::titlebar::TITLEBAR_HEIGHT;
 
@@ -1078,7 +1046,7 @@ impl Context {
         w.inform_unmaximized();
     }
 
-    fn unmaximize_window(&mut self, window_id: WindowId) {
+    pub(crate) fn unmaximize_window(&mut self, window_id: WindowId) {
         if let Some(window) = self.windows.get(&window_id) {
             let mut w = window.borrow_mut();
             w.maximized = false;
@@ -1248,6 +1216,11 @@ impl Context {
                 self.focus(window_id);
                 log::info!("Window {} initialized and focused", window_id);
             }
+            WindowEvent::Close => {
+                if let Some(window) = self.windows.get(&window_id) {
+                    window.borrow().close();
+                }
+            }
             WindowEvent::Fullscreen(output) => {
                 if let Some(window) = self.windows.get(&window_id) {
                     let mut w = window.borrow_mut();
@@ -1296,8 +1269,13 @@ impl Context {
     pub fn handle_render_start(&mut self) {
         let border_width = MUTABLE_CONFIG.read().unwrap().border_width;
 
-        log::info!("render_start: {} windows, {} outputs, current_output={:?}, border_width={}",
-            self.windows.len(), self.outputs.len(), self.current_output, border_width);
+        log::debug!(
+            "render_start: {} windows, {} outputs, current_output={:?}, border_width={}",
+            self.windows.len(),
+            self.outputs.len(),
+            self.current_output,
+            border_width
+        );
 
         self.apply_initial_positions();
         let unminimize_all = !self.startup_unminimize_done;
@@ -1321,7 +1299,13 @@ impl Context {
                 visible = true;
             }
 
-            log::info!("Window {} visible={} hidden={} tag={}", window_id, visible, w.hidden, w.tag);
+            log::debug!(
+                "Window {} visible={} hidden={} tag={}",
+                window_id,
+                visible,
+                w.hidden,
+                w.tag
+            );
 
             if visible {
                 w.show();

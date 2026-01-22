@@ -27,6 +27,7 @@ const TEXT_COLOR: u32 = 0xFFFFFFFF;
 
 /// Button background color (light gray)
 const BUTTON_BG_COLOR: u32 = 0xC0C0C0FF;
+const BUTTON_BG_PRESSED_LEFT: u32 = 0xA0A0A0FF;
 const BUTTON_LIGHT_EDGE: u32 = 0xFFFFFFFF;
 
 /// Border colors
@@ -68,6 +69,13 @@ pub struct TitlebarButtons {
     pub maximize: Rect,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TitlebarButton {
+    Close,
+    Hide,
+    Maximize,
+}
+
 pub fn button_rects(content_width: i32) -> TitlebarButtons {
     let size = TITLEBAR_HEIGHT;
     let y = 0;
@@ -99,6 +107,31 @@ pub fn button_rects(content_width: i32) -> TitlebarButtons {
         hide,
         maximize,
     }
+}
+
+pub fn button_at(content_width: i32, local_x: i32, local_y: i32) -> Option<TitlebarButton> {
+    if content_width <= 0 {
+        return None;
+    }
+
+    let rel_x = local_x - BORDER_WIDTH;
+    let rel_y = local_y - BORDER_WIDTH;
+    if rel_x < 0 || rel_y < 0 || rel_x >= content_width || rel_y >= TITLEBAR_HEIGHT {
+        return None;
+    }
+
+    let buttons = button_rects(content_width);
+    if buttons.close.contains(rel_x, rel_y) {
+        return Some(TitlebarButton::Close);
+    }
+    if buttons.hide.contains(rel_x, rel_y) {
+        return Some(TitlebarButton::Hide);
+    }
+    if buttons.maximize.contains(rel_x, rel_y) {
+        return Some(TitlebarButton::Maximize);
+    }
+
+    None
 }
 
 /// Get or initialize the titlebar font
@@ -304,7 +337,14 @@ impl Titlebar {
     }
 
     /// Render the titlebar with the given title and state
-    pub fn render(&mut self, title: Option<&str>, is_active: bool, is_maximized: bool) {
+    pub fn render(
+        &mut self,
+        title: Option<&str>,
+        is_active: bool,
+        is_maximized: bool,
+        hovered_button: Option<TitlebarButton>,
+        left_down: bool,
+    ) {
         if let Some(ref mut mmap) = self.mmap {
             let scale = self.scale.max(1);
             let width = self.width;
@@ -377,6 +417,12 @@ impl Titlebar {
 
                 let buttons = button_rects(content_width);
                 let button_bg = rgba_to_argb(BUTTON_BG_COLOR);
+                let pressed_hover = if left_down { hovered_button } else { None };
+                let close_bg = if pressed_hover == Some(TitlebarButton::Close) {
+                    rgba_to_argb(BUTTON_BG_PRESSED_LEFT)
+                } else {
+                    button_bg
+                };
                 let button_border = rgba_to_argb(BORDER_COLOR_OUTER);
 
                 fill_rect(
@@ -387,7 +433,7 @@ impl Titlebar {
                     (title_y + buttons.close.y) * scale,
                     buttons.close.width * scale,
                     title_height * scale,
-                    button_bg,
+                    close_bg,
                 );
                 draw_glyph_close(
                     pixels,
@@ -416,7 +462,7 @@ impl Titlebar {
                     (title_y + buttons.hide.y) * scale,
                     buttons.hide.width * scale,
                     button_bg,
-                    button_border,
+                    pressed_hover == Some(TitlebarButton::Hide),
                 );
                 draw_left_border(
                     pixels,
@@ -446,7 +492,7 @@ impl Titlebar {
                     (title_y + buttons.maximize.y) * scale,
                     buttons.maximize.width * scale,
                     button_bg,
-                    button_border,
+                    pressed_hover == Some(TitlebarButton::Maximize),
                 );
                 draw_left_border(
                     pixels,
@@ -791,11 +837,16 @@ fn draw_button_bevel(
     y: i32,
     size: i32,
     bg_argb: u32,
-    border_argb: u32,
+    pressed: bool,
 ) {
     let unit = (size / TITLEBAR_HEIGHT).max(1);
     let light_argb = rgba_to_argb(BUTTON_LIGHT_EDGE);
     let shadow_argb = rgba_to_argb(BORDER_COLOR_MID);
+    let (light_argb, shadow_argb) = if pressed {
+        (shadow_argb, light_argb)
+    } else {
+        (light_argb, shadow_argb)
+    };
 
     fill_rect(pixels, buffer_width, buffer_height, x, y, size, size, bg_argb);
     fill_rect(

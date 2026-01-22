@@ -16,6 +16,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::os::fd::{AsFd, AsRawFd};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use nix::poll::{poll, PollFd, PollFlags};
 use nix::sys::signal::{SigSet, Signal};
@@ -53,6 +54,8 @@ struct Globals {
     wl_outputs: HashMap<u32, wl_output::WlOutput>,
     wl_output_scales: HashMap<u32, i32>,
 }
+
+const CLOSE_DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 fn attach_wl_seat(
     state: &mut AppState,
@@ -352,6 +355,75 @@ fn update_menu_hover_from_surface(
     }
 }
 
+fn update_titlebar_hover_from_surface(
+    state: &mut AppState,
+    window_id: rwm::WindowId,
+    surface_x: f64,
+    surface_y: f64,
+) -> bool {
+    let local_x = surface_x.round() as i32;
+    let local_y = surface_y.round() as i32;
+    let mut context = state.context.borrow_mut();
+    let Some(window) = context.windows.get(&window_id) else {
+        return false;
+    };
+    let mut w = window.borrow_mut();
+    let new_hover = rwm::titlebar::button_at(w.width, local_x, local_y);
+    if w.titlebar_hovered == new_hover {
+        return false;
+    }
+    w.titlebar_hovered = new_hover;
+    true
+}
+
+fn update_titlebar_hover_from_global(
+    state: &mut AppState,
+    window_id: rwm::WindowId,
+    pointer_x: i32,
+    pointer_y: i32,
+) -> bool {
+    let (win_x, win_y, win_w) = {
+        let context = state.context.borrow();
+        let Some(window) = context.windows.get(&window_id) else {
+            return false;
+        };
+        let w = window.borrow();
+        (w.x, w.y, w.width)
+    };
+
+    let border_width = rwm::titlebar::BORDER_WIDTH;
+    let titlebar_height = rwm::titlebar::TITLEBAR_HEIGHT;
+    let origin_x = win_x - border_width;
+    let origin_y = win_y - border_width - titlebar_height;
+    let local_x = pointer_x - origin_x;
+    let local_y = pointer_y - origin_y;
+
+    let mut context = state.context.borrow_mut();
+    let Some(window) = context.windows.get(&window_id) else {
+        return false;
+    };
+    let mut w = window.borrow_mut();
+    let new_hover = rwm::titlebar::button_at(win_w, local_x, local_y);
+    if w.titlebar_hovered == new_hover {
+        return false;
+    }
+    w.titlebar_hovered = new_hover;
+    true
+}
+
+fn clear_titlebar_state(state: &mut AppState, window_id: rwm::WindowId) -> bool {
+    let mut context = state.context.borrow_mut();
+    let Some(window) = context.windows.get(&window_id) else {
+        return false;
+    };
+    let mut w = window.borrow_mut();
+    let changed = w.titlebar_hovered.is_some() || w.titlebar_pressed.is_some() || w.titlebar_left_down;
+    w.titlebar_hovered = None;
+    w.titlebar_pressed = None;
+    w.titlebar_left_down = false;
+    changed
+}
+
 fn handle_window_menu_cycle(state: &mut AppState, qh: &QueueHandle<AppState>) {
     let mut should_render = false;
     let mut open_new = false;
@@ -634,6 +706,8 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                         let is_focused = focused_window == Some(window_id);
                         let is_maximized = w.maximized;
                         let height = w.height;
+                        let hovered_button = w.titlebar_hovered;
+                        let titlebar_left_down = w.titlebar_left_down;
 
                         // Update titlebar if it exists and window has valid dimensions
                         let scale = w
@@ -643,8 +717,6 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                             .map(|o| o.borrow().scale)
                             .unwrap_or(1);
                         if let Some(ref mut titlebar) = w.titlebar {
-                            log::info!("Window {} titlebar: width={}, has_buffer={}",
-                                window_id, width, titlebar.buffer.is_some());
                             if width > 0 && height > 0 {
                                 // Ensure buffer is allocated
                                 titlebar.ensure_buffer(width, height, shm, qh, scale);
@@ -653,8 +725,13 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                                 }
 
                                 // Render titlebar content
-                                titlebar.render(title.as_deref(), is_focused, is_maximized);
-                                log::info!("Window {} titlebar rendered, focused={}", window_id, is_focused);
+                                titlebar.render(
+                                    title.as_deref(),
+                                    is_focused,
+                                    is_maximized,
+                                    hovered_button,
+                                    titlebar_left_down,
+                                );
 
                                 // Position decoration so it sits above content with borders
                                 let border_width = rwm::titlebar::BORDER_WIDTH;
@@ -665,13 +742,8 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                                 if titlebar.buffer.is_some() {
                                     titlebar.sync_next_commit();
                                     titlebar.commit();
-                                    log::info!("Window {} titlebar committed (width={})", window_id, width);
                                 }
-                            } else {
-                                log::info!("Window {} titlebar skipped: width=0", window_id);
                             }
-                        } else {
-                            log::warn!("Window {} has no titlebar!", window_id);
                         }
                     }
                 }
@@ -1104,6 +1176,20 @@ impl Dispatch<RiverSeatV1, rwm::SeatId> for AppState {
                 seat.borrow_mut().update_pointer_position(x, y);
                 state.context.borrow_mut().update_cursor_for_seat(*seat_id);
                 update_menu_hover_from_global(state, *seat_id, qh);
+                let titlebar_window = state.context.borrow().windows.iter().find_map(
+                    |(&window_id, window)| {
+                        if window.borrow().titlebar_left_down {
+                            Some(window_id)
+                        } else {
+                            None
+                        }
+                    },
+                );
+                if let Some(window_id) = titlebar_window {
+                    if update_titlebar_hover_from_global(state, window_id, x, y) {
+                        request_manage_dirty(state);
+                    }
+                }
             }
             _ => {}
         }
@@ -1572,6 +1658,7 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                 } => {
                     let wl_pointer = seat.borrow().wl_pointer.clone();
                     let mut target = rwm::PointerTarget::None;
+                    let mut titlebar_window = None;
 
                     let surface_pos = (surface_x.round() as i32, surface_y.round() as i32);
                     {
@@ -1591,6 +1678,19 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                                 if changed {
                                     drop(context);
                                     render_window_menu(state, _qh);
+                                }
+                            }
+                        }
+                    }
+
+                    if target == rwm::PointerTarget::None {
+                        let context = state.context.borrow();
+                        for (&window_id, window) in &context.windows {
+                            if let Some(titlebar) = window.borrow().titlebar.as_ref() {
+                                if titlebar.surface == surface {
+                                    target = rwm::PointerTarget::Titlebar(window_id);
+                                    titlebar_window = Some(window_id);
+                                    break;
                                 }
                             }
                         }
@@ -1622,8 +1722,25 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                     } else {
                         state.context.borrow_mut().update_cursor_for_seat(*seat_id);
                     }
+                    if let Some(window_id) = titlebar_window {
+                        let changed = update_titlebar_hover_from_surface(
+                            state,
+                            window_id,
+                            surface_x,
+                            surface_y,
+                        );
+                        if changed {
+                            request_manage_dirty(state);
+                        }
+                    }
                 }
                 wl_pointer::Event::Leave { serial, .. } => {
+                    let prev_target = seat.borrow().pointer_target;
+                    if let rwm::PointerTarget::Titlebar(window_id) = prev_target {
+                        if clear_titlebar_state(state, window_id) {
+                            request_manage_dirty(state);
+                        }
+                    }
                     let mut seat = seat.borrow_mut();
                     seat.pointer_enter_serial = serial;
                     seat.pointer_target = rwm::PointerTarget::None;
@@ -1648,6 +1765,16 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                     | rwm::PointerTarget::MenuShield(output_id) = target
                     {
                         update_menu_hover_from_surface(state, output_id, surface_x, surface_y, _qh);
+                    } else if let rwm::PointerTarget::Titlebar(window_id) = target {
+                        let changed = update_titlebar_hover_from_surface(
+                            state,
+                            window_id,
+                            surface_x,
+                            surface_y,
+                        );
+                        if changed {
+                            request_manage_dirty(state);
+                        }
                     }
                 }
                 wl_pointer::Event::Button { button, state: btn_state, .. } => {
@@ -1694,10 +1821,128 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                                     seat.borrow_mut().menu_click_button = Some(button);
                                 }
                                 rwm::PointerTarget::MenuShield(_) => {}
+                                rwm::PointerTarget::Titlebar(window_id) => {
+                                    if button == crate::config::button::LEFT {
+                                        let (px, py) = {
+                                            let seat_ref = seat.borrow();
+                                            (seat_ref.last_surface_x, seat_ref.last_surface_y)
+                                        };
+                                        update_titlebar_hover_from_surface(
+                                            state,
+                                            window_id,
+                                            px as f64,
+                                            py as f64,
+                                        );
+                                        let should_render = {
+                                            let mut context = state.context.borrow_mut();
+                                            if let Some(window) = context.windows.get(&window_id) {
+                                                let mut w = window.borrow_mut();
+                                                w.titlebar_left_down = true;
+                                                w.titlebar_pressed = w.titlebar_hovered;
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        };
+                                        if should_render {
+                                            request_manage_dirty(state);
+                                        }
+                                    }
+                                }
                                 rwm::PointerTarget::None => {}
                             }
                         }
                         wayland_client::WEnum::Value(wl_pointer::ButtonState::Released) => {
+                            if let rwm::PointerTarget::Titlebar(window_id) = target {
+                                if button == crate::config::button::LEFT {
+                                    let (px, py) = {
+                                        let seat_ref = seat.borrow();
+                                        (seat_ref.last_surface_x, seat_ref.last_surface_y)
+                                    };
+                                    update_titlebar_hover_from_surface(
+                                        state,
+                                        window_id,
+                                        px as f64,
+                                        py as f64,
+                                    );
+                                    let (action, should_render) = {
+                                        let mut context = state.context.borrow_mut();
+                                        let Some(window) = context.windows.get(&window_id) else {
+                                            return;
+                                        };
+                                        let mut w = window.borrow_mut();
+                                        w.titlebar_left_down = false;
+                                        let hovered = w.titlebar_hovered;
+                                        let pressed = w.titlebar_pressed.take();
+                                        let action = if pressed.is_some() && pressed == hovered {
+                                            pressed
+                                        } else {
+                                            None
+                                        };
+                                        (action, true)
+                                    };
+                                    if should_render {
+                                        request_manage_dirty(state);
+                                    }
+
+                                    match action {
+                                        Some(rwm::titlebar::TitlebarButton::Close) => {
+                                            let now = Instant::now();
+                                            let should_close = {
+                                                let mut seat_ref = seat.borrow_mut();
+                                                let is_double = seat_ref
+                                                    .last_close_click
+                                                    .map(|(last_window, when)| {
+                                                        last_window == window_id
+                                                            && now.duration_since(when)
+                                                                <= CLOSE_DOUBLE_CLICK
+                                                    })
+                                                    .unwrap_or(false);
+                                                seat_ref.last_close_click = Some((window_id, now));
+                                                is_double
+                                            };
+                                            if should_close {
+                                                if let Some(window) =
+                                                    state.context.borrow().windows.get(&window_id)
+                                                {
+                                                    window.borrow_mut()
+                                                        .queue_event(rwm::WindowEvent::Close);
+                                                    request_manage_dirty(state);
+                                                }
+                                            }
+                                        }
+                                        Some(rwm::titlebar::TitlebarButton::Hide) => {
+                                            seat.borrow_mut().last_close_click = None;
+                                            if let Some(window) =
+                                                state.context.borrow().windows.get(&window_id)
+                                            {
+                                                window.borrow_mut()
+                                                    .queue_event(rwm::WindowEvent::Minimize);
+                                                request_manage_dirty(state);
+                                            }
+                                        }
+                                        Some(rwm::titlebar::TitlebarButton::Maximize) => {
+                                            seat.borrow_mut().last_close_click = None;
+                                            if let Some(window) =
+                                                state.context.borrow().windows.get(&window_id)
+                                            {
+                                                if window.borrow().maximized {
+                                                    window.borrow_mut()
+                                                        .queue_event(rwm::WindowEvent::Unmaximize);
+                                                } else {
+                                                    window.borrow_mut()
+                                                        .queue_event(rwm::WindowEvent::Maximize);
+                                                }
+                                                request_manage_dirty(state);
+                                            }
+                                        }
+                                        None => {
+                                            seat.borrow_mut().last_close_click = None;
+                                        }
+                                    }
+                                }
+                                return;
+                            }
                             let (activate, close_menu) = {
                                 let seat_ref = seat.borrow();
                                 if seat_ref.menu_click_button != Some(button) {

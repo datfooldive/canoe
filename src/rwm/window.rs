@@ -3,9 +3,10 @@
 use crate::config::WindowDecoration;
 use crate::protocol::river_window_management_v1::client::river_window_v1::Edges;
 use crate::protocol::{RiverNodeV1, RiverOutputV1, RiverWindowV1};
+use super::titlebar::TitlebarButton;
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::rc::{Rc, Weak};
+use std::rc::Weak;
 
 /// Window identifier
 pub type WindowId = usize;
@@ -68,6 +69,7 @@ impl Default for Operator {
 #[derive(Debug, Clone)]
 pub enum WindowEvent {
     Init,
+    Close,
     Fullscreen(Option<Weak<RefCell<super::Output>>>),
     Unfullscreen,
     Maximize,
@@ -150,6 +152,12 @@ pub struct Window {
 
     /// Titlebar for server-side decoration
     pub titlebar: Option<super::Titlebar>,
+    /// Hovered titlebar button (if any)
+    pub titlebar_hovered: Option<TitlebarButton>,
+    /// Pressed titlebar button (if any)
+    pub titlebar_pressed: Option<TitlebarButton>,
+    /// Whether left mouse is currently held on the titlebar surface
+    pub titlebar_left_down: bool,
 
     /// Window needs to be configured (propose_dimensions)
     pub needs_configure: bool,
@@ -195,6 +203,9 @@ impl Window {
             position_undefined: true,
             scroller_mfact: None,
             titlebar: None,
+            titlebar_hovered: None,
+            titlebar_pressed: None,
+            titlebar_left_down: false,
             needs_configure: true,
             proposed_width: 0,
             proposed_height: 0,
