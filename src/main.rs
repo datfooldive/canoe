@@ -149,15 +149,16 @@ fn open_window_menu(
         return;
     };
 
-    let (items, output_info, focused_window) = {
+    let (items, output_info, focused_window, menu_theme) = {
         let context = state.context.borrow();
         let items = context.collect_menu_items(output_id);
         let focused = context.focused_window;
+        let menu_theme = rwm::MenuTheme::from_ui(&context.config.ui);
         let info = context.outputs.get(&output_id).map(|output| {
             let out = output.borrow();
             (out.width, out.height, out.wl_output.clone())
         });
-        (items, info, focused)
+        (items, info, focused, menu_theme)
     };
 
     let Some((ow, oh, wl_output)) = output_info else {
@@ -178,8 +179,15 @@ fn open_window_menu(
         rwm::LayerSurfaceKind::Menu,
     );
 
-    let mut menu =
-        rwm::WindowMenu::new(surface, layer_surface, output_id, items, pointer_x, pointer_y);
+    let mut menu = rwm::WindowMenu::new(
+        surface,
+        layer_surface,
+        output_id,
+        items,
+        pointer_x,
+        pointer_y,
+        menu_theme,
+    );
     if mode == rwm::WindowMenuMode::AltTab {
         menu.select_window(focused_window);
     }
@@ -363,12 +371,17 @@ fn update_titlebar_hover_from_surface(
 ) -> bool {
     let local_x = surface_x.round() as i32;
     let local_y = surface_y.round() as i32;
+    let (border_width, titlebar_height) = {
+        let ui = &state.context.borrow().config.ui;
+        (ui.border_width, rwm::titlebar::titlebar_height(ui))
+    };
     let mut context = state.context.borrow_mut();
     let Some(window) = context.windows.get(&window_id) else {
         return false;
     };
     let mut w = window.borrow_mut();
-    let new_hover = rwm::titlebar::button_at(w.width, local_x, local_y);
+    let new_hover =
+        rwm::titlebar::button_at(w.width, border_width, local_x, local_y, titlebar_height);
     if w.titlebar_hovered == new_hover {
         return false;
     }
@@ -391,8 +404,10 @@ fn update_titlebar_hover_from_global(
         (w.x, w.y, w.width)
     };
 
-    let border_width = rwm::titlebar::BORDER_WIDTH;
-    let titlebar_height = rwm::titlebar::TITLEBAR_HEIGHT;
+    let (border_width, titlebar_height) = {
+        let ui = &state.context.borrow().config.ui;
+        (ui.border_width, rwm::titlebar::titlebar_height(ui))
+    };
     let origin_x = win_x - border_width;
     let origin_y = win_y - border_width - titlebar_height;
     let local_x = pointer_x - origin_x;
@@ -403,7 +418,8 @@ fn update_titlebar_hover_from_global(
         return false;
     };
     let mut w = window.borrow_mut();
-    let new_hover = rwm::titlebar::button_at(win_w, local_x, local_y);
+    let new_hover =
+        rwm::titlebar::button_at(win_w, border_width, local_x, local_y, titlebar_height);
     if w.titlebar_hovered == new_hover {
         return false;
     }
@@ -691,6 +707,7 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                 if let Some(ref shm) = state.globals.shm {
                     let context = state.context.borrow();
                     let focused_window = context.focused_window;
+                    let ui = &context.config.ui;
 
                     for (&window_id, window) in &context.windows {
                         let mut w = window.borrow_mut();
@@ -719,9 +736,9 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                         if let Some(ref mut titlebar) = w.titlebar {
                             if width > 0 && height > 0 {
                                 // Ensure buffer is allocated
-                                titlebar.ensure_buffer(width, height, shm, qh, scale);
+                                titlebar.ensure_buffer(width, height, shm, qh, scale, ui);
                                 if let Some(ref compositor) = state.globals.compositor {
-                                    titlebar.update_input_region(compositor, qh);
+                                    titlebar.update_input_region(compositor, qh, ui);
                                 }
 
                                 // Render titlebar content
@@ -731,11 +748,12 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                                     is_maximized,
                                     hovered_button,
                                     titlebar_left_down,
+                                    ui,
                                 );
 
                                 // Position decoration so it sits above content with borders
-                                let border_width = rwm::titlebar::BORDER_WIDTH;
-                                let titlebar_height = rwm::titlebar::TITLEBAR_HEIGHT;
+                                let border_width = ui.border_width;
+                                let titlebar_height = rwm::titlebar::titlebar_height(ui);
                                 titlebar.set_offset(-border_width, -border_width - titlebar_height);
 
                                 // Sync and commit (only if we have a buffer)
@@ -1232,7 +1250,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, rwm::LayerSurfaceKind> for AppState {
                             (state.globals.shm.as_ref(), state.globals.compositor.as_ref())
                         {
                             desktop.ensure_buffer(shm, qh);
-                            let bg_color = state.context.borrow().config.desktop_background;
+                            let bg_color = state.context.borrow().config.ui.desktop_background;
                             desktop.render(bg_color);
                             desktop.update_input_region(compositor, qh);
                             desktop.commit();

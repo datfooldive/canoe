@@ -11,7 +11,7 @@ pub mod window;
 
 pub use context::Context;
 pub use desktop::DesktopSurface;
-pub use menu::{MenuItem, WindowMenu};
+pub use menu::{MenuItem, MenuTheme, WindowMenu};
 pub use output::{Output, OutputId};
 pub use shield::ShieldSurface;
 pub use seat::{PointerTarget, Seat, SeatId};

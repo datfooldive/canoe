@@ -1,7 +1,7 @@
 //! Core context - central state management
 
 use crate::binding::{Action, Direction, Edge, PointerBinding, XkbBinding};
-use crate::config::{Config, MUTABLE_CONFIG};
+use crate::config::{load_config, Config};
 use crate::layout::{self, LayoutArea, LayoutWindow};
 use crate::protocol::river_window_management_v1::client::river_window_v1::Edges;
 use crate::protocol::*;
@@ -84,7 +84,7 @@ impl Context {
             next_output_id: 0,
             next_seat_id: 0,
 
-            config: Config::default(),
+            config: load_config(),
 
             running: true,
             session_locked: false,
@@ -831,8 +831,8 @@ impl Context {
             (w.x, w.y, w.width, w.height, w.titlebar.is_some())
         };
 
-        let border_width = super::titlebar::BORDER_WIDTH;
-        let titlebar_height = super::titlebar::TITLEBAR_HEIGHT;
+        let border_width = self.config.ui.border_width;
+        let titlebar_height = super::titlebar::titlebar_height(&self.config.ui);
         let frame_x = x - border_width;
         let frame_y = y - border_width - titlebar_height;
         let frame_width = width + border_width * 2;
@@ -866,7 +866,8 @@ impl Context {
             let local_y = py - titlebar_origin_y;
 
             if local_x >= 0 && local_x < width && local_y >= 0 && local_y < titlebar_height {
-                let buttons = super::titlebar::button_rects(width);
+                let titlebar_height = super::titlebar::titlebar_height(&self.config.ui);
+                let buttons = super::titlebar::button_rects(width, titlebar_height);
 
                 if buttons.close.contains(local_x, local_y)
                     || buttons.hide.contains(local_x, local_y)
@@ -978,8 +979,8 @@ impl Context {
     }
 
     pub(crate) fn maximize_window(&mut self, window_id: WindowId) {
-        let border_width = super::titlebar::BORDER_WIDTH;
-        let titlebar_height = super::titlebar::TITLEBAR_HEIGHT;
+        let border_width = self.config.ui.border_width;
+        let titlebar_height = super::titlebar::titlebar_height(&self.config.ui);
 
         let output = self
             .windows
@@ -1267,7 +1268,7 @@ impl Context {
 
     /// Handle render_start event - position windows and set borders
     pub fn handle_render_start(&mut self) {
-        let border_width = MUTABLE_CONFIG.read().unwrap().border_width;
+        let border_width = self.config.ui.border_width;
 
         log::debug!(
             "render_start: {} windows, {} outputs, current_output={:?}, border_width={}",
@@ -1373,8 +1374,8 @@ impl Context {
 
             let target_w = (area_w / 2).max(1);
             let target_h = (area_h / 2).max(1);
-            let pad_x = 10 + super::titlebar::BORDER_WIDTH;
-            let pad_y = 10 + super::titlebar::BORDER_WIDTH + super::titlebar::TITLEBAR_HEIGHT;
+            let pad_x = 10 + self.config.ui.border_width;
+            let pad_y = 10 + self.config.ui.border_width + super::titlebar::titlebar_height(&self.config.ui);
             let start_x = area_x + pad_x;
             let start_y = area_y + pad_y;
             let mut end_x = area_x + area_w - target_w - pad_x;
@@ -1532,8 +1533,8 @@ impl Context {
                         let seat_ref = seat.borrow();
                         (seat_ref.pointer_x, seat_ref.pointer_y)
                     };
-                    let border_width = super::titlebar::BORDER_WIDTH;
-                    let titlebar_height = super::titlebar::TITLEBAR_HEIGHT;
+                    let border_width = self.config.ui.border_width;
+                    let titlebar_height = super::titlebar::titlebar_height(&self.config.ui);
                     let frame_x = w.x - border_width;
                     let frame_y = w.y - border_width - titlebar_height;
                     let frame_width = w.width + border_width * 2;

@@ -1,9 +1,11 @@
 //! Window menu rendering and interaction.
 
+use crate::config::UiConfig;
 use fontdue::{Font, FontSettings};
 use memmap2::MmapMut;
 use std::fs::File;
 use std::os::fd::AsFd;
+use std::path::Path;
 use std::sync::OnceLock;
 use wayland_client::protocol::{
     wl_buffer, wl_compositor, wl_region, wl_shm, wl_shm_pool, wl_surface,
@@ -41,9 +43,9 @@ pub struct WindowMenu {
     pub output_id: OutputId,
     pub origin_x: i32,
     pub origin_y: i32,
+    pub theme: MenuTheme,
 }
 
-const FONT_SIZE: f32 = 14.0;
 const MENU_BORDER: i32 = 1;
 const ITEM_PADDING_X: i32 = 8;
 const ITEM_PADDING_Y: i32 = 4;
@@ -52,12 +54,31 @@ const ICON_GAP: i32 = 6;
 const ACTIVE_DIAMOND_SIZE: i32 = 8;
 const SHADOW_SIZE: i32 = 3;
 
-const BG_COLOR_MENU: u32 = 0xC0C0C0FF;
-const BG_COLOR_ACTIVE: u32 = 0x2F6BFFFF;
-const TEXT_COLOR_NORMAL: u32 = 0x000000FF;
-const TEXT_COLOR_ACTIVE: u32 = 0xFFFFFFFF;
 const BORDER_COLOR: u32 = 0x000000FF;
 const SHADOW_COLOR: u32 = 0x404040FF;
+
+#[derive(Debug, Clone)]
+pub struct MenuTheme {
+    pub font_name: Option<String>,
+    pub font_size: f32,
+    pub bg: u32,
+    pub text: u32,
+    pub highlight_bg: u32,
+    pub highlight_text: u32,
+}
+
+impl MenuTheme {
+    pub fn from_ui(ui: &UiConfig) -> Self {
+        Self {
+            font_name: ui.font_name.clone(),
+            font_size: ui.font_size,
+            bg: ui.menu_bg,
+            text: ui.menu_text,
+            highlight_bg: ui.menu_highlight_bg,
+            highlight_text: ui.menu_highlight_text,
+        }
+    }
+}
 
 impl WindowMenu {
     pub fn new(
@@ -67,8 +88,9 @@ impl WindowMenu {
         items: Vec<MenuItem>,
         origin_x: i32,
         origin_y: i32,
+        theme: MenuTheme,
     ) -> Self {
-        let (width, height) = measure_menu(&items);
+        let (width, height) = measure_menu(&items, &theme);
         Self {
             surface,
             layer_surface,
@@ -87,6 +109,7 @@ impl WindowMenu {
             output_id,
             origin_x,
             origin_y,
+            theme,
         }
     }
 
@@ -102,7 +125,7 @@ impl WindowMenu {
             return None;
         }
 
-        let item_h = item_height();
+        let item_h = item_height(&self.theme);
         let idx = ((y - content_y) / item_h) as usize;
         if idx < self.items.len() {
             Some(idx)
@@ -267,7 +290,7 @@ impl WindowMenu {
             0,
             menu_w_px,
             menu_h_px,
-            rgba_to_argb(BG_COLOR_MENU),
+            rgba_to_argb(self.theme.bg),
         );
 
         draw_border_rect(
@@ -281,7 +304,7 @@ impl WindowMenu {
             rgba_to_argb(BORDER_COLOR),
         );
 
-        let item_h = item_height();
+        let item_h = item_height(&self.theme);
         let start_x = MENU_BORDER + ITEM_PADDING_X;
         let mut y = MENU_BORDER;
         let text_start_x = start_x + ICON_SIZE + ICON_GAP;
@@ -290,19 +313,19 @@ impl WindowMenu {
         for (idx, item) in self.items.iter().enumerate() {
             let is_active = self.hovered == Some(idx);
             let bg = if is_active {
-                rgba_to_argb(BG_COLOR_ACTIVE)
+                rgba_to_argb(self.theme.highlight_bg)
             } else {
-                rgba_to_argb(BG_COLOR_MENU)
+                rgba_to_argb(self.theme.bg)
             };
             let text_color = if is_active {
-                rgba_to_argb(TEXT_COLOR_ACTIVE)
+                rgba_to_argb(self.theme.highlight_text)
             } else {
-                rgba_to_argb(TEXT_COLOR_NORMAL)
+                rgba_to_argb(self.theme.text)
             };
             let icon_color = if is_active {
                 text_color
             } else {
-                rgba_to_argb(TEXT_COLOR_NORMAL)
+                rgba_to_argb(self.theme.text)
             };
 
             fill_rect(
@@ -351,6 +374,7 @@ impl WindowMenu {
                 item_h * scale,
                 text_color,
                 scale,
+                &self.theme,
             );
 
             y += item_h;
@@ -407,17 +431,17 @@ impl Drop for WindowMenu {
     }
 }
 
-fn item_height() -> i32 {
-    let font_h = FONT_SIZE.ceil() as i32;
+fn item_height(theme: &MenuTheme) -> i32 {
+    let font_h = theme.font_size.ceil() as i32;
     (font_h + ITEM_PADDING_Y * 2).max(1)
 }
 
-fn measure_menu(items: &[MenuItem]) -> (i32, i32) {
-    let font = match get_font() {
+fn measure_menu(items: &[MenuItem], theme: &MenuTheme) -> (i32, i32) {
+    let font = match get_font(theme.font_name.as_deref()) {
         Some(f) => f,
         None => {
             let menu_w = 120;
-            let menu_h = (items.len() as i32 * item_height()).max(1) + MENU_BORDER * 2;
+            let menu_h = (items.len() as i32 * item_height(theme)).max(1) + MENU_BORDER * 2;
             return (
                 menu_w + SHADOW_SIZE,
                 menu_h + SHADOW_SIZE,
@@ -427,14 +451,14 @@ fn measure_menu(items: &[MenuItem]) -> (i32, i32) {
 
     let mut max_width = 0.0f32;
     for item in items {
-        let w = measure_text(font, &item.title);
+        let w = measure_text(font, &item.title, theme.font_size);
         if w > max_width {
             max_width = w;
         }
     }
 
     let content_w = ITEM_PADDING_X * 2 + ICON_SIZE + ICON_GAP + max_width.ceil() as i32;
-    let content_h = item_height() * items.len() as i32;
+    let content_h = item_height(theme) * items.len() as i32;
     let menu_w = content_w + MENU_BORDER * 2;
     let menu_h = content_h + MENU_BORDER * 2;
     (
@@ -443,14 +467,15 @@ fn measure_menu(items: &[MenuItem]) -> (i32, i32) {
     )
 }
 
-fn measure_text(font: &Font, text: &str) -> f32 {
+fn measure_text(font: &Font, text: &str, font_size: f32) -> f32 {
     text.chars()
-        .map(|ch| font.metrics(ch, FONT_SIZE).advance_width)
+        .map(|ch| font.metrics(ch, font_size).advance_width)
         .sum()
 }
 
-fn get_font() -> Option<&'static Font> {
+fn get_font(font_name: Option<&str>) -> Option<&'static Font> {
     static FONT: OnceLock<Option<Font>> = OnceLock::new();
+    let requested = font_name.map(|name| name.to_string());
 
     FONT.get_or_init(|| {
         let font_paths = [
@@ -463,6 +488,27 @@ fn get_font() -> Option<&'static Font> {
             "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
             "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
         ];
+
+        if let Some(name) = requested.as_deref() {
+            let path = Path::new(name);
+            if path.is_file() {
+                if let Ok(font_data) = std::fs::read(path) {
+                    if let Ok(font) = Font::from_bytes(font_data, FontSettings::default()) {
+                        return Some(font);
+                    }
+                }
+            } else {
+                for candidate in font_paths {
+                    if Path::new(candidate).file_name().and_then(|n| n.to_str()) == Some(name) {
+                        if let Ok(font_data) = std::fs::read(candidate) {
+                            if let Ok(font) = Font::from_bytes(font_data, FontSettings::default()) {
+                                return Some(font);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         for path in font_paths {
             if let Ok(font_data) = std::fs::read(path) {
@@ -487,13 +533,14 @@ fn render_text(
     area_height: i32,
     text_argb: u32,
     scale: i32,
+    theme: &MenuTheme,
 ) {
-    let font = match get_font() {
+    let font = match get_font(theme.font_name.as_deref()) {
         Some(f) => f,
         None => return,
     };
 
-    let font_size = FONT_SIZE * scale.max(1) as f32;
+    let font_size = theme.font_size * scale.max(1) as f32;
     let baseline_y = if let Some(line_metrics) = font.horizontal_line_metrics(font_size) {
         let line_height = line_metrics.ascent - line_metrics.descent;
         origin_y as f32 + (area_height as f32 - line_height) / 2.0 + line_metrics.ascent

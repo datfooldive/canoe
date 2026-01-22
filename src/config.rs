@@ -2,7 +2,10 @@
 
 use crate::layout::LayoutType;
 use crate::rule::Rule;
+use serde::de::{self, Deserializer};
+use serde::Deserialize;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{LazyLock, RwLock};
 
 /// Mouse button codes (Linux input event codes)
@@ -66,6 +69,24 @@ impl Default for BorderColor {
             focus: 0xffff00ff,    // Bright yellow, fully opaque
             unfocus: 0x888800ff,  // Dark yellow/olive for unfocused
             urgent: 0xff0000ff,
+        }
+    }
+}
+
+/// Layered border colors (outer, mid, inner)
+#[derive(Debug, Clone, Copy)]
+pub struct BorderLayers {
+    pub outer: u32,
+    pub mid: u32,
+    pub inner: u32,
+}
+
+impl Default for BorderLayers {
+    fn default() -> Self {
+        Self {
+            outer: 0x000000FF,
+            mid: 0x888888FF,
+            inner: 0x000000FF,
         }
     }
 }
@@ -134,6 +155,48 @@ impl Default for BarConfig {
 pub struct XCursorTheme {
     pub name: String,
     pub size: u32,
+}
+
+/// UI theme configuration
+#[derive(Debug, Clone)]
+pub struct UiConfig {
+    pub border_width: i32,
+    pub border_active: BorderLayers,
+    pub border_inactive: BorderLayers,
+    pub titlebar_text_active: u32,
+    pub titlebar_text_inactive: u32,
+    pub titlebar_bg_active: u32,
+    pub titlebar_bg_inactive: u32,
+    pub menu_bg: u32,
+    pub menu_text: u32,
+    pub menu_highlight_bg: u32,
+    pub menu_highlight_text: u32,
+    pub button_bg: u32,
+    pub font_name: Option<String>,
+    pub font_size: f32,
+    pub desktop_background: u32,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            border_width: 5,
+            border_active: BorderLayers::default(),
+            border_inactive: BorderLayers::default(),
+            titlebar_text_active: 0xFFFFFFFF,
+            titlebar_text_inactive: 0xFFFFFFFF,
+            titlebar_bg_active: 0x2F6BFFFF,
+            titlebar_bg_inactive: 0x666666FF,
+            menu_bg: 0xC0C0C0FF,
+            menu_text: 0x000000FF,
+            menu_highlight_bg: 0x2F6BFFFF,
+            menu_highlight_text: 0xFFFFFFFF,
+            button_bg: 0xC0C0C0FF,
+            font_name: None,
+            font_size: 14.0,
+            desktop_background: 0x008080FF,
+        }
+    }
 }
 
 /// Tile layout configuration
@@ -269,7 +332,7 @@ pub struct Config {
     pub bar: BarConfig,
     pub default_window_decoration: WindowDecoration,
     pub border_color: BorderColor,
-    pub desktop_background: u32,
+    pub ui: UiConfig,
 
     pub default_layout: LayoutType,
     pub tags: Vec<String>,
@@ -292,13 +355,160 @@ impl Default for Config {
             bar: BarConfig::default(),
             default_window_decoration: WindowDecoration::Ssd,
             border_color: BorderColor::default(),
-            desktop_background: 0x008080FF,
+            ui: UiConfig::default(),
 
             default_layout: LayoutType::Tile,
             tags: (1..=9).map(|i| i.to_string()).collect(),
             rules: default_rules(),
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct FileConfig {
+    ui: Option<UiConfigFile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UiConfigFile {
+    border_width: Option<i32>,
+    border_active: Option<BorderLayersFile>,
+    border_inactive: Option<BorderLayersFile>,
+    titlebar_text_active: Option<u32>,
+    titlebar_text_inactive: Option<u32>,
+    titlebar_bg_active: Option<u32>,
+    titlebar_bg_inactive: Option<u32>,
+    menu_bg: Option<u32>,
+    menu_text: Option<u32>,
+    menu_highlight_bg: Option<u32>,
+    menu_highlight_text: Option<u32>,
+    button_bg: Option<u32>,
+    font_name: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_opt_f32")]
+    font_size: Option<f32>,
+    desktop_background: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BorderLayersFile {
+    outer: Option<u32>,
+    mid: Option<u32>,
+    inner: Option<u32>,
+}
+
+impl BorderLayers {
+    fn apply(&mut self, overrides: BorderLayersFile) {
+        if let Some(outer) = overrides.outer {
+            self.outer = outer;
+        }
+        if let Some(mid) = overrides.mid {
+            self.mid = mid;
+        }
+        if let Some(inner) = overrides.inner {
+            self.inner = inner;
+        }
+    }
+}
+
+impl UiConfig {
+    fn apply(&mut self, overrides: UiConfigFile) {
+        if let Some(border_width) = overrides.border_width {
+            self.border_width = border_width;
+        }
+        if let Some(border_active) = overrides.border_active {
+            self.border_active.apply(border_active);
+        }
+        if let Some(border_inactive) = overrides.border_inactive {
+            self.border_inactive.apply(border_inactive);
+        }
+        if let Some(color) = overrides.titlebar_text_active {
+            self.titlebar_text_active = color;
+        }
+        if let Some(color) = overrides.titlebar_text_inactive {
+            self.titlebar_text_inactive = color;
+        }
+        if let Some(color) = overrides.titlebar_bg_active {
+            self.titlebar_bg_active = color;
+        }
+        if let Some(color) = overrides.titlebar_bg_inactive {
+            self.titlebar_bg_inactive = color;
+        }
+        if let Some(color) = overrides.menu_bg {
+            self.menu_bg = color;
+        }
+        if let Some(color) = overrides.menu_text {
+            self.menu_text = color;
+        }
+        if let Some(color) = overrides.menu_highlight_bg {
+            self.menu_highlight_bg = color;
+        }
+        if let Some(color) = overrides.menu_highlight_text {
+            self.menu_highlight_text = color;
+        }
+        if let Some(color) = overrides.button_bg {
+            self.button_bg = color;
+        }
+        if let Some(font_name) = overrides.font_name {
+            let trimmed = font_name.trim().to_string();
+            self.font_name = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            };
+        }
+        if let Some(font_size) = overrides.font_size {
+            self.font_size = font_size;
+        }
+        if let Some(color) = overrides.desktop_background {
+            self.desktop_background = color;
+        }
+    }
+}
+
+fn deserialize_opt_f32<'de, D>(deserializer: D) -> Result<Option<f32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<toml::Value>::deserialize(deserializer)?;
+    match value {
+        None => Ok(None),
+        Some(toml::Value::Float(value)) => Ok(Some(value as f32)),
+        Some(toml::Value::Integer(value)) => Ok(Some(value as f32)),
+        Some(other) => Err(de::Error::custom(format!(
+            "expected float or integer, got {}",
+            other.type_str()
+        ))),
+    }
+}
+
+fn config_path() -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    Some(home.join(".config").join("rwm").join("rwm.toml"))
+}
+
+/// Load config from ~/.config/rwm/rwm.toml and apply overrides to defaults.
+pub fn load_config() -> Config {
+    let mut config = Config::default();
+    if let Some(path) = config_path() {
+        if let Ok(contents) = std::fs::read_to_string(&path) {
+            match toml::from_str::<FileConfig>(&contents) {
+                Ok(file_config) => {
+                    if let Some(ui) = file_config.ui {
+                        config.ui.apply(ui);
+                    }
+                }
+                Err(err) => {
+                    log::warn!("Failed to parse config {}: {}", path.display(), err);
+                }
+            }
+        }
+    }
+
+    if let Ok(mut mutable) = MUTABLE_CONFIG.write() {
+        mutable.border_width = config.ui.border_width;
+    }
+
+    config
 }
 
 /// Get default window rules

@@ -1,39 +1,23 @@
 //! Titlebar rendering for windows
 
+use crate::config::UiConfig;
 use crate::protocol::RiverDecorationV1;
 use fontdue::{Font, FontSettings};
 use std::os::fd::AsFd;
+use std::path::Path;
 use std::sync::OnceLock;
 use wayland_client::protocol::{wl_buffer, wl_compositor, wl_region, wl_shm, wl_shm_pool, wl_surface};
 use wayland_client::QueueHandle;
 
 /// Titlebar height in pixels
-pub const TITLEBAR_HEIGHT: i32 = 24;
+pub fn titlebar_height(ui: &UiConfig) -> i32 {
+    let base = (0.75 * ui.font_size).round() as i32;
+    (base * 2 + 1).max(1)
+}
 
-/// Total border width in pixels (1px black, 3px gray, 1px black)
-pub const BORDER_WIDTH: i32 = 5;
-
-/// Font size for titlebar text
-const FONT_SIZE: f32 = 14.0;
-
-/// Background color for active window titlebar (blue)
-const BG_COLOR_ACTIVE: u32 = 0x2F6BFFFF;
-
-/// Background color for inactive window titlebar (gray)
-const BG_COLOR_INACTIVE: u32 = 0x666666FF;
-
-/// Text color for titlebar (white)
-const TEXT_COLOR: u32 = 0xFFFFFFFF;
-
-/// Button background color (light gray)
-const BUTTON_BG_COLOR: u32 = 0xC0C0C0FF;
+/// Button background color (pressed left edge)
 const BUTTON_BG_PRESSED_LEFT: u32 = 0xA0A0A0FF;
 const BUTTON_LIGHT_EDGE: u32 = 0xFFFFFFFF;
-
-/// Border colors
-const BORDER_COLOR_OUTER: u32 = 0x000000FF;
-const BORDER_COLOR_MID: u32 = 0x888888FF;
-const BORDER_COLOR_INNER: u32 = 0x000000FF;
 
 const BORDER_OUTER: i32 = 1;
 const BORDER_MID: i32 = 3;
@@ -76,8 +60,8 @@ pub enum TitlebarButton {
     Maximize,
 }
 
-pub fn button_rects(content_width: i32) -> TitlebarButtons {
-    let size = TITLEBAR_HEIGHT;
+pub fn button_rects(content_width: i32, titlebar_height: i32) -> TitlebarButtons {
+    let size = titlebar_height;
     let y = 0;
     let close = Rect {
         x: BUTTON_PADDING_X,
@@ -109,18 +93,24 @@ pub fn button_rects(content_width: i32) -> TitlebarButtons {
     }
 }
 
-pub fn button_at(content_width: i32, local_x: i32, local_y: i32) -> Option<TitlebarButton> {
+pub fn button_at(
+    content_width: i32,
+    border_width: i32,
+    local_x: i32,
+    local_y: i32,
+    titlebar_height: i32,
+) -> Option<TitlebarButton> {
     if content_width <= 0 {
         return None;
     }
 
-    let rel_x = local_x - BORDER_WIDTH;
-    let rel_y = local_y - BORDER_WIDTH;
-    if rel_x < 0 || rel_y < 0 || rel_x >= content_width || rel_y >= TITLEBAR_HEIGHT {
+    let rel_x = local_x - border_width;
+    let rel_y = local_y - border_width;
+    if rel_x < 0 || rel_y < 0 || rel_x >= content_width || rel_y >= titlebar_height {
         return None;
     }
 
-    let buttons = button_rects(content_width);
+    let buttons = button_rects(content_width, titlebar_height);
     if buttons.close.contains(rel_x, rel_y) {
         return Some(TitlebarButton::Close);
     }
@@ -135,9 +125,9 @@ pub fn button_at(content_width: i32, local_x: i32, local_y: i32) -> Option<Title
 }
 
 /// Get or initialize the titlebar font
-fn get_font() -> Option<&'static Font> {
+fn get_font(font_name: Option<&str>) -> Option<&'static Font> {
     static FONT: OnceLock<Option<Font>> = OnceLock::new();
-
+    let requested = font_name.map(|name| name.to_string());
     FONT.get_or_init(|| {
         // Try common system font paths
         let font_paths = [
@@ -150,6 +140,30 @@ fn get_font() -> Option<&'static Font> {
             "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
             "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
         ];
+
+        if let Some(name) = requested.as_deref() {
+            let path = Path::new(name);
+            if path.is_file() {
+                if let Ok(font_data) = std::fs::read(path) {
+                    if let Ok(font) = Font::from_bytes(font_data, FontSettings::default()) {
+                        log::info!("Loaded titlebar font from {}", path.display());
+                        return Some(font);
+                    }
+                }
+            } else {
+                for candidate in font_paths {
+                    if Path::new(candidate).file_name().and_then(|n| n.to_str()) == Some(name) {
+                        if let Ok(font_data) = std::fs::read(candidate) {
+                            if let Ok(font) = Font::from_bytes(font_data, FontSettings::default()) {
+                                log::info!("Loaded titlebar font from {}", candidate);
+                                return Some(font);
+                            }
+                        }
+                    }
+                }
+            }
+            log::warn!("Requested titlebar font {} not found, falling back", name);
+        }
 
         for path in font_paths {
             if let Ok(font_data) = std::fs::read(path) {
@@ -227,6 +241,7 @@ impl Titlebar {
         shm: &wl_shm::WlShm,
         qh: &QueueHandle<D>,
         scale: i32,
+        ui: &UiConfig,
     ) where
         D: wayland_client::Dispatch<wl_shm_pool::WlShmPool, ()>
             + wayland_client::Dispatch<wl_buffer::WlBuffer, ()>,
@@ -237,8 +252,9 @@ impl Titlebar {
         }
 
         let scale = scale.max(1);
-        let width = content_width + BORDER_WIDTH * 2;
-        let height = content_height + TITLEBAR_HEIGHT + BORDER_WIDTH * 2;
+        let titlebar_height = titlebar_height(ui);
+        let width = content_width + ui.border_width * 2;
+        let height = content_height + titlebar_height + ui.border_width * 2;
         let buffer_width = width * scale;
         let buffer_height = height * scale;
         if buffer_width <= 0 || buffer_height <= 0 {
@@ -344,6 +360,7 @@ impl Titlebar {
         is_maximized: bool,
         hovered_button: Option<TitlebarButton>,
         left_down: bool,
+        ui: &UiConfig,
     ) {
         if let Some(ref mut mmap) = self.mmap {
             let scale = self.scale.max(1);
@@ -353,6 +370,7 @@ impl Titlebar {
             let buffer_height = self.buffer_height;
             let content_width = self.content_width;
             let content_height = self.content_height;
+            let titlebar_height = titlebar_height(ui);
             if width <= 0
                 || height <= 0
                 || buffer_width <= 0
@@ -367,13 +385,18 @@ impl Titlebar {
             clear_buffer(pixels);
 
             let border_offset = 0;
+            let border_colors = if is_active {
+                ui.border_active
+            } else {
+                ui.border_inactive
+            };
             draw_border_layer(
                 pixels,
                 buffer_width,
                 buffer_height,
                 border_offset,
                 BORDER_OUTER * scale,
-                BORDER_COLOR_OUTER,
+                border_colors.outer,
             );
             draw_border_layer(
                 pixels,
@@ -381,7 +404,7 @@ impl Titlebar {
                 buffer_height,
                 border_offset + BORDER_OUTER * scale,
                 BORDER_MID * scale,
-                BORDER_COLOR_MID,
+                border_colors.mid,
             );
             draw_border_layer(
                 pixels,
@@ -389,21 +412,21 @@ impl Titlebar {
                 buffer_height,
                 border_offset + (BORDER_OUTER + BORDER_MID) * scale,
                 BORDER_INNER * scale,
-                BORDER_COLOR_INNER,
+                border_colors.inner,
             );
 
             // Choose background color based on active state
             let bg_color = if is_active {
-                BG_COLOR_ACTIVE
+                ui.titlebar_bg_active
             } else {
-                BG_COLOR_INACTIVE
+                ui.titlebar_bg_inactive
             };
             let bg_argb = rgba_to_argb(bg_color);
 
-            let title_height = TITLEBAR_HEIGHT.min(height - BORDER_WIDTH * 2);
+            let title_height = titlebar_height.min(height - ui.border_width * 2);
             if title_height > 0 {
-                let title_x = BORDER_WIDTH;
-                let title_y = BORDER_WIDTH;
+                let title_x = ui.border_width;
+                let title_y = ui.border_width;
                 fill_rect(
                     pixels,
                     buffer_width,
@@ -415,15 +438,15 @@ impl Titlebar {
                     bg_argb,
                 );
 
-                let buttons = button_rects(content_width);
-                let button_bg = rgba_to_argb(BUTTON_BG_COLOR);
+                let buttons = button_rects(content_width, titlebar_height);
+                let button_bg = rgba_to_argb(ui.button_bg);
                 let pressed_hover = if left_down { hovered_button } else { None };
                 let close_bg = if pressed_hover == Some(TitlebarButton::Close) {
                     rgba_to_argb(BUTTON_BG_PRESSED_LEFT)
                 } else {
                     button_bg
                 };
-                let button_border = rgba_to_argb(BORDER_COLOR_OUTER);
+                let button_border = rgba_to_argb(border_colors.outer);
 
                 fill_rect(
                     pixels,
@@ -443,6 +466,7 @@ impl Titlebar {
                     (title_y + buttons.close.y) * scale,
                     buttons.close.width * scale,
                     button_border,
+                    titlebar_height,
                 );
                 draw_left_border(
                     pixels,
@@ -452,6 +476,7 @@ impl Titlebar {
                     title_y * scale,
                     title_height * scale,
                     button_border,
+                    titlebar_height,
                 );
 
                 draw_button_bevel(
@@ -462,7 +487,9 @@ impl Titlebar {
                     (title_y + buttons.hide.y) * scale,
                     buttons.hide.width * scale,
                     button_bg,
+                    rgba_to_argb(border_colors.mid),
                     pressed_hover == Some(TitlebarButton::Hide),
+                    titlebar_height,
                 );
                 draw_left_border(
                     pixels,
@@ -472,6 +499,7 @@ impl Titlebar {
                     title_y * scale,
                     title_height * scale,
                     button_border,
+                    titlebar_height,
                 );
                 draw_glyph_caret(
                     pixels,
@@ -482,6 +510,7 @@ impl Titlebar {
                     buttons.hide.width * scale,
                     button_border,
                     true,
+                    titlebar_height,
                 );
 
                 draw_button_bevel(
@@ -492,7 +521,9 @@ impl Titlebar {
                     (title_y + buttons.maximize.y) * scale,
                     buttons.maximize.width * scale,
                     button_bg,
+                    rgba_to_argb(border_colors.mid),
                     pressed_hover == Some(TitlebarButton::Maximize),
+                    titlebar_height,
                 );
                 draw_left_border(
                     pixels,
@@ -502,6 +533,7 @@ impl Titlebar {
                     title_y * scale,
                     title_height * scale,
                     button_border,
+                    titlebar_height,
                 );
                 if is_maximized {
                     draw_glyph_caret_pair(
@@ -512,6 +544,7 @@ impl Titlebar {
                         (title_y + buttons.maximize.y) * scale,
                         buttons.maximize.width * scale,
                         button_border,
+                        titlebar_height,
                     );
                 } else {
                     draw_glyph_caret(
@@ -523,11 +556,12 @@ impl Titlebar {
                         buttons.maximize.width * scale,
                         button_border,
                         false,
+                        titlebar_height,
                     );
                 }
 
                 let separator_y = title_y + title_height;
-                if separator_y >= 0 && separator_y < height - BORDER_WIDTH {
+                if separator_y >= 0 && separator_y < height - ui.border_width {
                     fill_rect(
                         pixels,
                         buffer_width,
@@ -536,7 +570,7 @@ impl Titlebar {
                         separator_y * scale,
                         content_width * scale,
                         scale,
-                        rgba_to_argb(BORDER_COLOR_OUTER),
+                        rgba_to_argb(border_colors.outer),
                     );
                 }
 
@@ -548,6 +582,11 @@ impl Titlebar {
                         let text_end = (buttons.maximize.x - BUTTON_GAP).min(content_width);
                         let text_width = (text_end - text_start).max(0);
                         if text_width > 0 {
+                            let text_color = if is_active {
+                                ui.titlebar_text_active
+                            } else {
+                                ui.titlebar_text_inactive
+                            };
                             render_title(
                                 pixels,
                                 buffer_width,
@@ -558,6 +597,9 @@ impl Titlebar {
                                 text_width * scale,
                                 title_height * scale,
                                 scale,
+                                text_color,
+                                ui.font_size,
+                                ui.font_name.as_deref(),
                             );
                         }
                     }
@@ -583,6 +625,7 @@ impl Titlebar {
         &self,
         compositor: &wl_compositor::WlCompositor,
         qh: &QueueHandle<D>,
+        ui: &UiConfig,
     ) where
         D: wayland_client::Dispatch<wl_region::WlRegion, ()>,
     {
@@ -593,9 +636,10 @@ impl Titlebar {
         let region = compositor.create_region(qh, ());
         region.add(0, 0, self.width, self.height);
         if self.content_width > 0 && self.content_height > 0 {
+            let titlebar_height = titlebar_height(ui);
             region.subtract(
-                BORDER_WIDTH,
-                BORDER_WIDTH + TITLEBAR_HEIGHT,
+                ui.border_width,
+                ui.border_width + titlebar_height,
                 self.content_width,
                 self.content_height,
             );
@@ -626,14 +670,18 @@ fn render_title(
     area_width: i32,
     area_height: i32,
     scale: i32,
+    text_color: u32,
+    font_size: f32,
+    font_name: Option<&str>,
 ) {
-    let font = match get_font() {
+    let font = match get_font(font_name) {
         Some(f) => f,
         None => return,
     };
 
-    let text_argb = rgba_to_argb(TEXT_COLOR);
-    let font_size = FONT_SIZE * scale.max(1) as f32;
+    let origin_y = origin_y + 1;
+    let text_argb = rgba_to_argb(text_color);
+    let font_size = font_size * scale.max(1) as f32;
 
     // Calculate baseline for vertical centering across glyphs.
     let baseline_y = if let Some(line_metrics) = font.horizontal_line_metrics(font_size) {
@@ -683,6 +731,14 @@ fn render_title(
                         if offset + 4 <= pixels.len() {
                             // Alpha blend the text onto the background
                             blend_pixel(&mut pixels[offset..offset + 4], text_argb, alpha);
+                            // Faux-bold: blend an extra pixel to the right.
+                            let px_bold = px + 1;
+                            if px_bold < origin_x + area_width && px_bold < buffer_width {
+                                let offset_bold = ((py * buffer_width + px_bold) * 4) as usize;
+                                if offset_bold + 4 <= pixels.len() {
+                                    blend_pixel(&mut pixels[offset_bold..offset_bold + 4], text_argb, alpha);
+                                }
+                            }
                         }
                     }
                 }
@@ -837,11 +893,12 @@ fn draw_button_bevel(
     y: i32,
     size: i32,
     bg_argb: u32,
+    shadow_argb: u32,
     pressed: bool,
+    titlebar_height: i32,
 ) {
-    let unit = (size / TITLEBAR_HEIGHT).max(1);
+    let unit = (size / titlebar_height.max(1)).max(1);
     let light_argb = rgba_to_argb(BUTTON_LIGHT_EDGE);
-    let shadow_argb = rgba_to_argb(BORDER_COLOR_MID);
     let (light_argb, shadow_argb) = if pressed {
         (shadow_argb, light_argb)
     } else {
@@ -923,11 +980,12 @@ fn draw_left_border(
     y: i32,
     height: i32,
     color_argb: u32,
+    titlebar_height: i32,
 ) {
     if x < 0 {
         return;
     }
-    let unit = (height / TITLEBAR_HEIGHT).max(1);
+    let unit = (height / titlebar_height.max(1)).max(1);
     fill_rect(
         pixels,
         buffer_width,
@@ -948,8 +1006,9 @@ fn draw_glyph_close(
     y: i32,
     size: i32,
     color_argb: u32,
+    titlebar_height: i32,
 ) {
-    let unit = (size / TITLEBAR_HEIGHT).max(1);
+    let unit = (size / titlebar_height.max(1)).max(1);
     let inner_size = (size - 2 * unit).max(1);
     let line_y = y + unit + (inner_size - unit) / 2;
     let line_x = x + 6 * unit;
@@ -977,9 +1036,10 @@ fn draw_glyph_caret(
     size: i32,
     color_argb: u32,
     down: bool,
+    titlebar_height: i32,
 ) {
-    let unit = (size / TITLEBAR_HEIGHT).max(1);
-    let span = (TITLEBAR_HEIGHT / 4).max(2);
+    let unit = (size / titlebar_height.max(1)).max(1);
+    let span = (titlebar_height / 4).max(2);
     let glyph_height = span * 2 + 1;
     let glyph_height_px = glyph_height * unit;
     let inner_size = (size - 2 * unit).max(1);
@@ -1016,9 +1076,10 @@ fn draw_glyph_caret_pair(
     y: i32,
     size: i32,
     color_argb: u32,
+    titlebar_height: i32,
 ) {
-    let unit = (size / TITLEBAR_HEIGHT).max(1);
-    let span = (TITLEBAR_HEIGHT / 4).max(2);
+    let unit = (size / titlebar_height.max(1)).max(1);
+    let span = (titlebar_height / 4).max(2);
     let glyph_height = span * 2 + 1;
     let glyph_height_px = glyph_height * unit;
     let inner_size = (size - 2 * unit).max(1);
