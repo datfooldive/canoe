@@ -26,6 +26,7 @@ memmap2 = "0.9"
 
 # Font rendering for titlebars
 fontdue = "0.9"
+resvg = "0.42"
 
 # Regex for window rules
 regex = "1"

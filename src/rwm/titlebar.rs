@@ -3,6 +3,7 @@
 use crate::config::UiConfig;
 use crate::protocol::RiverDecorationV1;
 use fontdue::{Font, FontSettings};
+use resvg::{tiny_skia, usvg};
 use std::os::fd::AsFd;
 use std::path::Path;
 use std::sync::OnceLock;
@@ -28,6 +29,11 @@ const TITLE_PADDING: i32 = 8;
 
 const BUTTON_PADDING_X: i32 = 0;
 const BUTTON_GAP: i32 = 1;
+
+const ICON_CLOSE_SVG: &str = include_str!("../../assets/icons/close.svg");
+const ICON_MINIMIZE_SVG: &str = include_str!("../../assets/icons/minimize.svg");
+const ICON_MAXIMIZE_SVG: &str = include_str!("../../assets/icons/maximize.svg");
+const ICON_UNMAXIMIZE_SVG: &str = include_str!("../../assets/icons/unmaximize.svg");
 
 #[derive(Clone, Copy, Debug)]
 pub struct Rect {
@@ -58,6 +64,30 @@ pub enum TitlebarButton {
     Close,
     Hide,
     Maximize,
+}
+
+struct IconCache {
+    size_px: i32,
+    close: tiny_skia::Pixmap,
+    minimize: tiny_skia::Pixmap,
+    maximize: tiny_skia::Pixmap,
+    unmaximize: tiny_skia::Pixmap,
+}
+
+impl IconCache {
+    fn build(size_px: i32) -> Option<Self> {
+        let close = rasterize_icon(ICON_CLOSE_SVG, size_px)?;
+        let minimize = rasterize_icon(ICON_MINIMIZE_SVG, size_px)?;
+        let maximize = rasterize_icon(ICON_MAXIMIZE_SVG, size_px)?;
+        let unmaximize = rasterize_icon(ICON_UNMAXIMIZE_SVG, size_px)?;
+        Some(Self {
+            size_px,
+            close,
+            minimize,
+            maximize,
+            unmaximize,
+        })
+    }
 }
 
 pub fn button_rects(content_width: i32, titlebar_height: i32) -> TitlebarButtons {
@@ -208,6 +238,8 @@ pub struct Titlebar {
     pub content_height: i32,
     /// Output scale factor
     pub scale: i32,
+    /// Cached icon bitmaps (rasterized from embedded SVGs)
+    icon_cache: Option<IconCache>,
     /// Whether titlebar needs redraw
     pub dirty: bool,
 }
@@ -229,6 +261,7 @@ impl Titlebar {
             content_width: 0,
             content_height: 0,
             scale: 1,
+            icon_cache: None,
             dirty: true,
         }
     }
@@ -284,6 +317,7 @@ impl Titlebar {
             self.content_width = content_width;
             self.content_height = content_height;
             self.scale = scale;
+            self.icon_cache = None;
             self.dirty = true;
 
             // Clean up old buffer
@@ -352,6 +386,22 @@ impl Titlebar {
         self.surface.set_buffer_scale(scale);
     }
 
+    fn ensure_icon_cache(&mut self, size_px: i32) -> bool {
+        if size_px <= 0 {
+            return false;
+        }
+
+        let rebuild = match self.icon_cache {
+            Some(ref cache) => cache.size_px != size_px,
+            None => true,
+        };
+        if rebuild {
+            self.icon_cache = IconCache::build(size_px);
+        }
+
+        self.icon_cache.is_some()
+    }
+
     /// Render the titlebar with the given title and state
     pub fn render(
         &mut self,
@@ -362,15 +412,19 @@ impl Titlebar {
         left_down: bool,
         ui: &UiConfig,
     ) {
+        let scale = self.scale.max(1);
+        let titlebar_height = titlebar_height(ui);
+        let icon_size = icon_size_for_titlebar(titlebar_height);
+        let icon_size_px = icon_size * scale;
+        let icons_ready = self.ensure_icon_cache(icon_size_px);
+
         if let Some(ref mut mmap) = self.mmap {
-            let scale = self.scale.max(1);
             let width = self.width;
             let height = self.height;
             let buffer_width = self.buffer_width;
             let buffer_height = self.buffer_height;
             let content_width = self.content_width;
             let content_height = self.content_height;
-            let titlebar_height = titlebar_height(ui);
             if width <= 0
                 || height <= 0
                 || buffer_width <= 0
@@ -458,16 +512,35 @@ impl Titlebar {
                     title_height * scale,
                     close_bg,
                 );
-                draw_glyph_close(
-                    pixels,
-                    buffer_width,
-                    buffer_height,
-                    (title_x + buttons.close.x) * scale,
-                    (title_y + buttons.close.y) * scale,
-                    buttons.close.width * scale,
-                    button_border,
-                    titlebar_height,
-                );
+                if icons_ready {
+                    let icon_x =
+                        (title_x + buttons.close.x + (buttons.close.width - icon_size) / 2) * scale;
+                    let icon_y = (title_y + buttons.close.y
+                        + (buttons.close.height - icon_size) / 2)
+                        * scale;
+                    if let Some(ref icons) = self.icon_cache {
+                        draw_svg_icon(
+                            pixels,
+                            buffer_width,
+                            buffer_height,
+                            &icons.close,
+                            icon_x,
+                            icon_y,
+                            button_border,
+                        );
+                    }
+                } else {
+                    draw_glyph_close(
+                        pixels,
+                        buffer_width,
+                        buffer_height,
+                        (title_x + buttons.close.x) * scale,
+                        (title_y + buttons.close.y) * scale,
+                        buttons.close.width * scale,
+                        button_border,
+                        titlebar_height,
+                    );
+                }
                 draw_left_border(
                     pixels,
                     buffer_width,
@@ -501,17 +574,35 @@ impl Titlebar {
                     button_border,
                     titlebar_height,
                 );
-                draw_glyph_caret(
-                    pixels,
-                    buffer_width,
-                    buffer_height,
-                    (title_x + buttons.hide.x) * scale,
-                    (title_y + buttons.hide.y) * scale,
-                    buttons.hide.width * scale,
-                    button_border,
-                    true,
-                    titlebar_height,
-                );
+                if icons_ready {
+                    let icon_x =
+                        (title_x + buttons.hide.x + (buttons.hide.width - icon_size) / 2) * scale;
+                    let icon_y =
+                        (title_y + buttons.hide.y + (buttons.hide.height - icon_size) / 2) * scale;
+                    if let Some(ref icons) = self.icon_cache {
+                        draw_svg_icon(
+                            pixels,
+                            buffer_width,
+                            buffer_height,
+                            &icons.minimize,
+                            icon_x,
+                            icon_y,
+                            button_border,
+                        );
+                    }
+                } else {
+                    draw_glyph_caret(
+                        pixels,
+                        buffer_width,
+                        buffer_height,
+                        (title_x + buttons.hide.x) * scale,
+                        (title_y + buttons.hide.y) * scale,
+                        buttons.hide.width * scale,
+                        button_border,
+                        true,
+                        titlebar_height,
+                    );
+                }
 
                 draw_button_bevel(
                     pixels,
@@ -535,7 +626,32 @@ impl Titlebar {
                     button_border,
                     titlebar_height,
                 );
-                if is_maximized {
+                if icons_ready {
+                    let icon_x = (title_x
+                        + buttons.maximize.x
+                        + (buttons.maximize.width - icon_size) / 2)
+                        * scale;
+                    let icon_y = (title_y
+                        + buttons.maximize.y
+                        + (buttons.maximize.height - icon_size) / 2)
+                        * scale;
+                    if let Some(ref icons) = self.icon_cache {
+                        let icon = if is_maximized {
+                            &icons.unmaximize
+                        } else {
+                            &icons.maximize
+                        };
+                        draw_svg_icon(
+                            pixels,
+                            buffer_width,
+                            buffer_height,
+                            icon,
+                            icon_x,
+                            icon_y,
+                            button_border,
+                        );
+                    }
+                } else if is_maximized {
                     draw_glyph_caret_pair(
                         pixels,
                         buffer_width,
@@ -746,6 +862,75 @@ fn render_title(
         }
 
         x_pos += metrics.advance_width;
+    }
+}
+
+fn icon_size_for_titlebar(titlebar_height: i32) -> i32 {
+    (titlebar_height - 4).clamp(6, titlebar_height.max(1))
+}
+
+fn rasterize_icon(svg: &str, size_px: i32) -> Option<tiny_skia::Pixmap> {
+    let opt = usvg::Options::default();
+    let tree = usvg::Tree::from_str(svg, &opt).ok()?;
+    let mut pixmap = tiny_skia::Pixmap::new(size_px as u32, size_px as u32)?;
+    let size = tree.size();
+    let scale_x = size_px as f32 / size.width();
+    let scale_y = size_px as f32 / size.height();
+    let scale = scale_x.min(scale_y);
+    let scaled_w = size.width() * scale;
+    let scaled_h = size.height() * scale;
+    let tx = (size_px as f32 - scaled_w) * 0.5;
+    let ty = (size_px as f32 - scaled_h) * 0.5;
+    let transform = tiny_skia::Transform::from_scale(scale, scale).post_translate(tx, ty);
+    let mut pixmap_mut = pixmap.as_mut();
+    resvg::render(&tree, transform, &mut pixmap_mut);
+    Some(pixmap)
+}
+
+fn draw_svg_icon(
+    pixels: &mut [u8],
+    buffer_width: i32,
+    buffer_height: i32,
+    icon: &tiny_skia::Pixmap,
+    x: i32,
+    y: i32,
+    color_argb: u32,
+) {
+    if buffer_width <= 0 || buffer_height <= 0 {
+        return;
+    }
+
+    let icon_w = icon.width() as i32;
+    let icon_h = icon.height() as i32;
+    if icon_w <= 0 || icon_h <= 0 {
+        return;
+    }
+
+    let x0 = x.max(0);
+    let y0 = y.max(0);
+    let x1 = (x + icon_w).min(buffer_width);
+    let y1 = (y + icon_h).min(buffer_height);
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
+
+    let icon_data = icon.data();
+    for row in y0..y1 {
+        let src_y = row - y;
+        for col in x0..x1 {
+            let src_x = col - x;
+            let src_offset = ((src_y * icon_w + src_x) * 4) as usize;
+            if src_offset + 4 <= icon_data.len() {
+                let alpha = icon_data[src_offset + 3];
+                if alpha == 0 {
+                    continue;
+                }
+                let dst_offset = ((row * buffer_width + col) * 4) as usize;
+                if dst_offset + 4 <= pixels.len() {
+                    blend_pixel(&mut pixels[dst_offset..dst_offset + 4], color_argb, alpha);
+                }
+            }
+        }
     }
 }
 
