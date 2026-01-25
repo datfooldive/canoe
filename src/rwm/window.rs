@@ -87,8 +87,6 @@ pub struct Window {
 
     /// Associated output
     pub output: Option<Weak<RefCell<super::Output>>>,
-    /// Window tags (bitmask)
-    pub tag: u32,
     /// Process ID
     pub pid: i32,
     /// Application ID
@@ -169,7 +167,6 @@ impl Window {
             rwm_window: None,
             rwm_node: None,
             output: None,
-            tag: 1, // Default to tag 1
             pid: 0,
             app_id: None,
             title: None,
@@ -220,26 +217,12 @@ impl Window {
             }
         }
 
-        // Check tag visibility
-        (self.tag & output.tag) != 0
+        true
     }
 
     /// Check if window should be treated as tiled
     pub fn is_tiled(&self) -> bool {
         !self.floating && matches!(self.fullscreen, FullscreenState::None)
-    }
-
-    /// Set window tag
-    pub fn set_tag(&mut self, tag: u32) {
-        self.tag = tag;
-    }
-
-    /// Toggle window tag
-    pub fn toggle_tag(&mut self, mask: u32) {
-        let new_tag = self.tag ^ mask;
-        if new_tag != 0 {
-            self.tag = new_tag;
-        }
     }
 
     /// Propose dimensions for the window
@@ -527,7 +510,6 @@ impl std::fmt::Debug for Window {
             .field("id", &self.id)
             .field("app_id", &self.app_id)
             .field("title", &self.title)
-            .field("tag", &self.tag)
             .field("x", &self.x)
             .field("y", &self.y)
             .field("width", &self.width)

@@ -39,15 +39,6 @@ pub struct Output {
     /// Output scale factor (integer)
     pub scale: i32,
 
-    /// Current visible tags
-    pub tag: u32,
-    /// Main active tag
-    pub main_tag: u32,
-    /// Previous tag state (for switching back)
-    pub prev_tag: u32,
-    /// Previous main tag
-    pub prev_main_tag: u32,
-
     /// Currently fullscreen window on this output
     pub fullscreen_window: Option<Weak<RefCell<super::Window>>>,
 
@@ -79,10 +70,6 @@ impl Output {
             width: 0,
             height: 0,
             scale: 1,
-            tag: 1, // Default to tag 1
-            main_tag: 1,
-            prev_tag: 1,
-            prev_main_tag: 1,
             fullscreen_window: None,
             exclusive_x: 0,
             exclusive_y: 0,
@@ -91,41 +78,6 @@ impl Output {
             desktop_surface: None,
             removed: false,
         }
-    }
-
-    /// Set current tag
-    pub fn set_tag(&mut self, tag: u32) {
-        if tag == 0 {
-            return;
-        }
-
-        // Save previous state
-        self.prev_tag = self.tag;
-        self.prev_main_tag = self.main_tag;
-
-        self.tag = tag;
-        // Main tag is the lowest set bit
-        self.main_tag = tag & tag.wrapping_neg();
-    }
-
-    /// Toggle tag visibility
-    pub fn toggle_tag(&mut self, mask: u32) {
-        let new_tag = self.tag ^ mask;
-        if new_tag != 0 {
-            self.prev_tag = self.tag;
-            self.prev_main_tag = self.main_tag;
-            self.tag = new_tag;
-            // Update main tag if it was toggled off
-            if (self.main_tag & new_tag) == 0 {
-                self.main_tag = new_tag & new_tag.wrapping_neg();
-            }
-        }
-    }
-
-    /// Switch to previous tag
-    pub fn switch_to_previous_tag(&mut self) {
-        std::mem::swap(&mut self.tag, &mut self.prev_tag);
-        std::mem::swap(&mut self.main_tag, &mut self.prev_main_tag);
     }
 
     /// Get usable area (after subtracting exclusive zones)
@@ -194,7 +146,6 @@ impl std::fmt::Debug for Output {
             .field("y", &self.y)
             .field("width", &self.width)
             .field("height", &self.height)
-            .field("tag", &self.tag)
             .finish()
     }
 }

@@ -29,10 +29,7 @@ pub struct Step {
 
 /// Window manager state for custom actions
 #[derive(Debug, Clone)]
-pub struct State {
-    pub output_tag: u32,
-    pub focused_window_tag: Option<u32>,
-}
+pub struct State {}
 
 impl State {
     pub fn refresh_current_bar(&self) {
@@ -111,17 +108,6 @@ pub enum Action {
     HideFocused,
     /// Maximize the focused window to the output
     MaximizeFocused,
-
-    /// Set output tags
-    SetOutputTag { tag: u32 },
-    /// Set window tags
-    SetWindowTag { tag: u32 },
-    /// Toggle output tags
-    ToggleOutputTag { mask: u32 },
-    /// Toggle window tags
-    ToggleWindowTag { mask: u32 },
-    /// Switch to previous tag
-    SwitchToPreviousTag,
 
     /// Activate selected window menu item
     ActivateMenuHovered,
@@ -230,12 +216,6 @@ pub fn default_xkb_bindings() -> Vec<(Mode, u32, u32, Action, super::BindingEven
             super::BindingEvent::Pressed,
         ),
     ]
-}
-
-/// Generate tag bindings - empty for stacking WM
-pub fn default_tag_bindings() -> Vec<(Mode, u32, u32, Action)> {
-    // Stacking WM doesn't use tags/workspaces
-    Vec::new()
 }
 
 /// Default pointer bindings

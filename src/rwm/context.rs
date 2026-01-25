@@ -113,7 +113,6 @@ impl Context {
         if let Some(output_id) = self.current_output {
             if let Some(output) = self.outputs.get(&output_id) {
                 window.output = Some(Rc::downgrade(output));
-                window.tag = output.borrow().main_tag;
             }
         }
 
@@ -196,20 +195,13 @@ impl Context {
 
     /// Set up bindings for a seat
     fn setup_seat_bindings(&self, seat: &mut Seat) {
-        use crate::binding::action::{
-            default_pointer_bindings, default_tag_bindings, default_xkb_bindings,
-        };
+        use crate::binding::action::{default_pointer_bindings, default_xkb_bindings};
 
         // Add XKB bindings
         for (mode, keysym, modifiers, action, event) in default_xkb_bindings() {
             seat.add_xkb_binding(
                 XkbBinding::new(mode, keysym, modifiers, action).with_event(event),
             );
-        }
-
-        // Add tag bindings
-        for (mode, keysym, modifiers, action) in default_tag_bindings() {
-            seat.add_xkb_binding(XkbBinding::new(mode, keysym, modifiers, action));
         }
 
         // Add pointer bindings
@@ -238,9 +230,6 @@ impl Context {
             window.title.as_deref(),
         );
 
-        if let Some(tag) = applied.tag {
-            window.tag = tag;
-        }
         if let Some(floating) = applied.floating {
             window.floating = floating;
         }
@@ -399,50 +388,6 @@ impl Context {
                     self.maximize_window(window_id);
                 }
             }
-            Action::SetOutputTag { tag } => {
-                if let Some(output_id) = self.current_output {
-                    if let Some(output) = self.outputs.get(&output_id) {
-                        output.borrow_mut().set_tag(tag);
-                        self.arrange_output(output_id);
-                    }
-                }
-            }
-            Action::SetWindowTag { tag } => {
-                if let Some(window_id) = self.focused_window {
-                    if let Some(window) = self.windows.get(&window_id) {
-                        window.borrow_mut().set_tag(tag);
-                        if let Some(output_id) = self.current_output {
-                            self.arrange_output(output_id);
-                        }
-                    }
-                }
-            }
-            Action::ToggleOutputTag { mask } => {
-                if let Some(output_id) = self.current_output {
-                    if let Some(output) = self.outputs.get(&output_id) {
-                        output.borrow_mut().toggle_tag(mask);
-                        self.arrange_output(output_id);
-                    }
-                }
-            }
-            Action::ToggleWindowTag { mask } => {
-                if let Some(window_id) = self.focused_window {
-                    if let Some(window) = self.windows.get(&window_id) {
-                        window.borrow_mut().toggle_tag(mask);
-                        if let Some(output_id) = self.current_output {
-                            self.arrange_output(output_id);
-                        }
-                    }
-                }
-            }
-            Action::SwitchToPreviousTag => {
-                if let Some(output_id) = self.current_output {
-                    if let Some(output) = self.outputs.get(&output_id) {
-                        output.borrow_mut().switch_to_previous_tag();
-                        self.arrange_output(output_id);
-                    }
-                }
-            }
             Action::ActivateMenuHovered => {
                 if self.window_menu_mode == Some(WindowMenuMode::Pointer)
                     && self
@@ -484,21 +429,7 @@ impl Context {
 
     /// Get current state for custom actions
     pub fn get_state(&self) -> crate::binding::State {
-        let output_tag = self
-            .current_output
-            .and_then(|id| self.outputs.get(&id))
-            .map(|o| o.borrow().tag)
-            .unwrap_or(1);
-
-        let focused_window_tag = self
-            .focused_window
-            .and_then(|id| self.windows.get(&id))
-            .map(|w| w.borrow().tag);
-
-        crate::binding::State {
-            output_tag,
-            focused_window_tag,
-        }
+        crate::binding::State {}
     }
 
     /// Spawn a command
@@ -624,7 +555,6 @@ impl Context {
             if let Some(window) = self.windows.get(&window_id) {
                 let mut w = window.borrow_mut();
                 w.output = Some(Rc::downgrade(target_output));
-                w.tag = target_output.borrow().main_tag;
             }
         }
 
@@ -1302,11 +1232,10 @@ impl Context {
             }
 
             log::debug!(
-                "Window {} visible={} hidden={} tag={}",
+                "Window {} visible={} hidden={}",
                 window_id,
                 visible,
-                w.hidden,
-                w.tag
+                w.hidden
             );
 
             if visible {
@@ -1701,7 +1630,7 @@ fn window_matches_output(output: &Output, window: &Window) -> bool {
             }
         }
     }
-    (window.tag & output.tag) != 0
+    true
 }
 
 fn menu_item_from_window(

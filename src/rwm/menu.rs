@@ -170,12 +170,8 @@ impl WindowMenu {
         false
     }
 
-    pub fn ensure_buffer<D>(
-        &mut self,
-        shm: &wl_shm::WlShm,
-        qh: &QueueHandle<D>,
-        scale: i32,
-    ) where
+    pub fn ensure_buffer<D>(&mut self, shm: &wl_shm::WlShm, qh: &QueueHandle<D>, scale: i32)
+    where
         D: 'static
             + wayland_client::Dispatch<wl_shm_pool::WlShmPool, ()>
             + wayland_client::Dispatch<wl_buffer::WlBuffer, ()>,

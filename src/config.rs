@@ -221,7 +221,6 @@ pub struct Config {
     pub border_color: BorderColor,
     pub ui: UiConfig,
 
-    pub tags: Vec<String>,
     pub rules: Vec<Rule>,
 }
 
@@ -243,7 +242,6 @@ impl Default for Config {
             border_color: BorderColor::default(),
             ui: UiConfig::default(),
 
-            tags: (1..=9).map(|i| i.to_string()).collect(),
             rules: default_rules(),
         }
     }
@@ -426,7 +424,6 @@ fn default_rules() -> Vec<Rule> {
         },
         Rule {
             app_id: Some("chromium".to_string()),
-            tag: Some(1 << 1),
             ..Default::default()
         },
         Rule {

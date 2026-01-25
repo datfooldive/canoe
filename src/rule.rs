@@ -55,8 +55,6 @@ pub struct Rule {
     /// Regex pattern for title
     pub title_regex: Option<Regex>,
 
-    /// Tag to assign to matching windows
-    pub tag: Option<u32>,
     /// Whether matching windows should float
     pub floating: Option<bool>,
     /// Decoration style for matching windows
@@ -104,9 +102,6 @@ pub fn apply_rules(rules: &[Rule], app_id: Option<&str>, title: Option<&str>) ->
 
     for rule in rules {
         if rule.matches(app_id, title) {
-            if let Some(tag) = rule.tag {
-                applied.tag = Some(tag);
-            }
             if let Some(floating) = rule.floating {
                 applied.floating = Some(floating);
             }
@@ -128,7 +123,6 @@ pub fn apply_rules(rules: &[Rule], app_id: Option<&str>, title: Option<&str>) ->
 /// Result of applying rules to a window
 #[derive(Debug, Clone, Default)]
 pub struct AppliedRules {
-    pub tag: Option<u32>,
     pub floating: Option<bool>,
     pub decoration: Option<WindowDecoration>,
     pub is_terminal: Option<bool>,
@@ -170,24 +164,13 @@ mod tests {
 
     #[test]
     fn test_apply_rules() {
-        let rules = vec![
-            Rule {
-                app_id: Some("foot".to_string()),
-                is_terminal: Some(true),
-                ..Default::default()
-            },
-            Rule {
-                app_id: Some("chromium".to_string()),
-                tag: Some(1 << 1),
-                ..Default::default()
-            },
-        ];
+        let rules = vec![Rule {
+            app_id: Some("foot".to_string()),
+            is_terminal: Some(true),
+            ..Default::default()
+        }];
 
         let applied = apply_rules(&rules, Some("foot"), None);
         assert_eq!(applied.is_terminal, Some(true));
-
-        let applied = apply_rules(&rules, Some("chromium"), None);
-        assert_eq!(applied.tag, Some(1 << 1));
-        assert!(applied.is_terminal.is_none());
     }
 }
