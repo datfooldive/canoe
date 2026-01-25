@@ -18,7 +18,6 @@ pub fn titlebar_height(ui: &UiConfig) -> i32 {
 
 /// Button background color (pressed left edge)
 const BUTTON_BG_PRESSED_LEFT: u32 = 0xA0A0A0FF;
-const BUTTON_LIGHT_EDGE: u32 = 0xFFFFFFFF;
 
 const BORDER_OUTER: i32 = 1;
 const BORDER_MID: i32 = 3;
@@ -495,7 +494,8 @@ impl Titlebar {
                 let buttons = button_rects(content_width, titlebar_height);
                 let button_bg = rgba_to_argb(ui.button_bg);
                 let pressed_hover = if left_down { hovered_button } else { None };
-                let close_bg = if pressed_hover == Some(TitlebarButton::Close) {
+                let close_pressed = pressed_hover == Some(TitlebarButton::Close);
+                let close_bg = if close_pressed {
                     rgba_to_argb(BUTTON_BG_PRESSED_LEFT)
                 } else {
                     button_bg
@@ -552,6 +552,8 @@ impl Titlebar {
                     titlebar_height,
                 );
 
+                let hide_pressed = pressed_hover == Some(TitlebarButton::Hide);
+                let hide_offset = if hide_pressed { scale } else { 0 };
                 draw_button_bevel(
                     pixels,
                     buffer_width,
@@ -560,8 +562,9 @@ impl Titlebar {
                     (title_y + buttons.hide.y) * scale,
                     buttons.hide.width * scale,
                     button_bg,
-                    rgba_to_argb(border_colors.mid),
-                    pressed_hover == Some(TitlebarButton::Hide),
+                    rgba_to_argb(ui.button_highlight),
+                    rgba_to_argb(ui.button_shadow),
+                    hide_pressed,
                     titlebar_height,
                 );
                 draw_left_border(
@@ -575,10 +578,12 @@ impl Titlebar {
                     titlebar_height,
                 );
                 if icons_ready {
-                    let icon_x =
-                        (title_x + buttons.hide.x + (buttons.hide.width - icon_size) / 2) * scale;
-                    let icon_y =
-                        (title_y + buttons.hide.y + (buttons.hide.height - icon_size) / 2) * scale;
+                    let icon_x = (title_x + buttons.hide.x + (buttons.hide.width - icon_size) / 2)
+                        * scale
+                        + hide_offset;
+                    let icon_y = (title_y + buttons.hide.y + (buttons.hide.height - icon_size) / 2)
+                        * scale
+                        + hide_offset;
                     if let Some(ref icons) = self.icon_cache {
                         draw_svg_icon(
                             pixels,
@@ -595,8 +600,8 @@ impl Titlebar {
                         pixels,
                         buffer_width,
                         buffer_height,
-                        (title_x + buttons.hide.x) * scale,
-                        (title_y + buttons.hide.y) * scale,
+                        (title_x + buttons.hide.x) * scale + hide_offset,
+                        (title_y + buttons.hide.y) * scale + hide_offset,
                         buttons.hide.width * scale,
                         button_border,
                         true,
@@ -604,6 +609,8 @@ impl Titlebar {
                     );
                 }
 
+                let maximize_pressed = pressed_hover == Some(TitlebarButton::Maximize);
+                let maximize_offset = if maximize_pressed { scale } else { 0 };
                 draw_button_bevel(
                     pixels,
                     buffer_width,
@@ -612,8 +619,9 @@ impl Titlebar {
                     (title_y + buttons.maximize.y) * scale,
                     buttons.maximize.width * scale,
                     button_bg,
-                    rgba_to_argb(border_colors.mid),
-                    pressed_hover == Some(TitlebarButton::Maximize),
+                    rgba_to_argb(ui.button_highlight),
+                    rgba_to_argb(ui.button_shadow),
+                    maximize_pressed,
                     titlebar_height,
                 );
                 draw_left_border(
@@ -627,14 +635,14 @@ impl Titlebar {
                     titlebar_height,
                 );
                 if icons_ready {
-                    let icon_x = (title_x
-                        + buttons.maximize.x
-                        + (buttons.maximize.width - icon_size) / 2)
-                        * scale;
-                    let icon_y = (title_y
-                        + buttons.maximize.y
-                        + (buttons.maximize.height - icon_size) / 2)
-                        * scale;
+                    let icon_x =
+                        (title_x + buttons.maximize.x + (buttons.maximize.width - icon_size) / 2)
+                            * scale
+                            + maximize_offset;
+                    let icon_y =
+                        (title_y + buttons.maximize.y + (buttons.maximize.height - icon_size) / 2)
+                            * scale
+                            + maximize_offset;
                     if let Some(ref icons) = self.icon_cache {
                         let icon = if is_maximized {
                             &icons.unmaximize
@@ -656,8 +664,8 @@ impl Titlebar {
                         pixels,
                         buffer_width,
                         buffer_height,
-                        (title_x + buttons.maximize.x) * scale,
-                        (title_y + buttons.maximize.y) * scale,
+                        (title_x + buttons.maximize.x) * scale + maximize_offset,
+                        (title_y + buttons.maximize.y) * scale + maximize_offset,
                         buttons.maximize.width * scale,
                         button_border,
                         titlebar_height,
@@ -667,8 +675,8 @@ impl Titlebar {
                         pixels,
                         buffer_width,
                         buffer_height,
-                        (title_x + buttons.maximize.x) * scale,
-                        (title_y + buttons.maximize.y) * scale,
+                        (title_x + buttons.maximize.x) * scale + maximize_offset,
+                        (title_y + buttons.maximize.y) * scale + maximize_offset,
                         buttons.maximize.width * scale,
                         button_border,
                         false,
@@ -1078,19 +1086,18 @@ fn draw_button_bevel(
     y: i32,
     size: i32,
     bg_argb: u32,
+    highlight_argb: u32,
     shadow_argb: u32,
     pressed: bool,
     titlebar_height: i32,
 ) {
     let unit = (size / titlebar_height.max(1)).max(1);
-    let light_argb = rgba_to_argb(BUTTON_LIGHT_EDGE);
-    let (light_argb, shadow_argb) = if pressed {
-        (shadow_argb, light_argb)
+    let (highlight_argb, shadow_argb) = if pressed {
+        (shadow_argb, bg_argb)
     } else {
-        (light_argb, shadow_argb)
+        (highlight_argb, shadow_argb)
     };
 
-    fill_rect(pixels, buffer_width, buffer_height, x, y, size, size, bg_argb);
     fill_rect(
         pixels,
         buffer_width,
@@ -1098,28 +1105,45 @@ fn draw_button_bevel(
         x,
         y,
         size,
-        unit,
-        light_argb,
-    );
-    fill_rect(
-        pixels,
-        buffer_width,
-        buffer_height,
-        x,
-        y,
-        unit,
         size,
-        light_argb,
+        bg_argb,
     );
 
+    // highlight: horizontal, vertical
+    fill_rect(
+        pixels,
+        buffer_width,
+        buffer_height,
+        x,
+        y,
+        size,
+        unit,
+        highlight_argb,
+    );
+    fill_rect(
+        pixels,
+        buffer_width,
+        buffer_height,
+        x,
+        y,
+        unit,
+        size,
+        highlight_argb,
+    );
+
+    if pressed {
+        return;
+    }
+
     if size >= 3 * unit {
+        // shadow, inner: horizontal, vertical
         fill_rect(
             pixels,
             buffer_width,
             buffer_height,
-            x,
+            x + unit,
             y + size - 2 * unit,
-            size - unit,
+            size - 2 * unit,
             unit,
             shadow_argb,
         );
@@ -1135,13 +1159,14 @@ fn draw_button_bevel(
         );
     }
 
+    // shadow, outer: horizontal, vertical
     fill_rect(
         pixels,
         buffer_width,
         buffer_height,
         x,
         y + size - unit,
-        size - unit,
+        size,
         unit,
         shadow_argb,
     );
@@ -1150,9 +1175,9 @@ fn draw_button_bevel(
         buffer_width,
         buffer_height,
         x + size - unit,
-        y + unit,
+        y,
         unit,
-        size - 2 * unit,
+        size,
         shadow_argb,
     );
 }

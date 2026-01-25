@@ -172,6 +172,8 @@ pub struct UiConfig {
     pub menu_highlight_bg: u32,
     pub menu_highlight_text: u32,
     pub button_bg: u32,
+    pub button_highlight: u32,
+    pub button_shadow: u32,
     pub font_name: Option<String>,
     pub font_size: f32,
     pub desktop_background: u32,
@@ -192,6 +194,8 @@ impl Default for UiConfig {
             menu_highlight_bg: 0x2F6BFFFF,
             menu_highlight_text: 0xFFFFFFFF,
             button_bg: 0xC0C0C0FF,
+            button_highlight: 0xFFFFFFFF,
+            button_shadow: 0x808080FF,
             font_name: None,
             font_size: 14.0,
             desktop_background: 0x008080FF,
@@ -383,6 +387,8 @@ struct UiConfigFile {
     menu_highlight_bg: Option<u32>,
     menu_highlight_text: Option<u32>,
     button_bg: Option<u32>,
+    button_highlight: Option<u32>,
+    button_shadow: Option<u32>,
     font_name: Option<String>,
     #[serde(default, deserialize_with = "deserialize_opt_f32")]
     font_size: Option<f32>,
@@ -447,6 +453,12 @@ impl UiConfig {
         }
         if let Some(color) = overrides.button_bg {
             self.button_bg = color;
+        }
+        if let Some(color) = overrides.button_highlight {
+            self.button_highlight = color;
+        }
+        if let Some(color) = overrides.button_shadow {
+            self.button_shadow = color;
         }
         if let Some(font_name) = overrides.font_name {
             let trimmed = font_name.trim().to_string();
