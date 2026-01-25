@@ -1,5 +1,7 @@
 //! Binding actions - what happens when a binding is triggered
 
+#![allow(dead_code)]
+
 use crate::config::Mode;
 
 /// Direction for iteration/movement
@@ -52,9 +54,10 @@ pub enum Arg {
 pub type CustomFn = fn(&State, &Arg);
 
 /// All possible binding actions
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum Action {
     /// Quit the window manager
+    #[default]
     Quit,
     /// Close the focused window
     Close,
@@ -129,12 +132,6 @@ pub enum Action {
 
     /// Custom function action
     CustomFn { func: CustomFn, arg: Arg },
-}
-
-impl Default for Action {
-    fn default() -> Self {
-        Action::Quit
-    }
 }
 
 /// Default keybindings configuration for stacking WM

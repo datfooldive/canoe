@@ -1,5 +1,7 @@
 //! Window management
 
+#![allow(dead_code)]
+
 use super::titlebar::TitlebarButton;
 use crate::config::WindowDecoration;
 use crate::protocol::river_window_management_v1::client::river_window_v1::Edges;
@@ -41,8 +43,9 @@ pub struct SavedGeometry {
 }
 
 /// Operator state for move/resize operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum Operator {
+    #[default]
     None,
     Move {
         start_x: i32,
@@ -57,12 +60,6 @@ pub enum Operator {
         edges: u32,
         seat: Option<Weak<RefCell<super::Seat>>>,
     },
-}
-
-impl Default for Operator {
-    fn default() -> Self {
-        Operator::None
-    }
 }
 
 /// Window event types

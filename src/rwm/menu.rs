@@ -170,13 +170,14 @@ impl WindowMenu {
         false
     }
 
-    pub fn ensure_buffer<D: 'static>(
+    pub fn ensure_buffer<D>(
         &mut self,
         shm: &wl_shm::WlShm,
         qh: &QueueHandle<D>,
         scale: i32,
     ) where
-        D: wayland_client::Dispatch<wl_shm_pool::WlShmPool, ()>
+        D: 'static
+            + wayland_client::Dispatch<wl_shm_pool::WlShmPool, ()>
             + wayland_client::Dispatch<wl_buffer::WlBuffer, ()>,
     {
         if self.width <= 0 || self.height <= 0 {
@@ -383,12 +384,12 @@ impl WindowMenu {
         }
     }
 
-    pub fn update_input_region<D: 'static>(
+    pub fn update_input_region<D>(
         &self,
         compositor: &wl_compositor::WlCompositor,
         qh: &QueueHandle<D>,
     ) where
-        D: wayland_client::Dispatch<wl_region::WlRegion, ()>,
+        D: 'static + wayland_client::Dispatch<wl_region::WlRegion, ()>,
     {
         let menu_w = self.menu_width();
         let menu_h = self.menu_height();
@@ -518,6 +519,7 @@ fn get_font(font_name: Option<&str>) -> Option<&'static Font> {
     .as_ref()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_text(
     pixels: &mut [u8],
     buffer_width: i32,
@@ -624,6 +626,7 @@ fn clear_buffer(pixels: &mut [u8]) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fill_rect(
     pixels: &mut [u8],
     buffer_width: i32,
@@ -657,6 +660,7 @@ fn fill_rect(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_border_rect(
     pixels: &mut [u8],
     buffer_width: i32,
@@ -747,6 +751,7 @@ fn draw_shadow(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_dashed_rect(
     pixels: &mut [u8],
     buffer_width: i32,

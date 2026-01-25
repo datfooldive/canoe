@@ -1,5 +1,7 @@
 //! Output (display) management
 
+#![allow(dead_code)]
+
 use crate::protocol::{RiverLayerShellOutputV1, RiverOutputV1};
 use std::cell::RefCell;
 use std::rc::Weak;

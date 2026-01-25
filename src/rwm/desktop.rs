@@ -1,5 +1,7 @@
 //! Desktop background surface for pointer input.
 
+#![allow(dead_code)]
+
 use memmap2::MmapMut;
 use std::fs::File;
 use std::os::fd::AsFd;
@@ -62,9 +64,10 @@ impl DesktopSurface {
         self.mmap = None;
     }
 
-    pub fn ensure_buffer<D: 'static>(&mut self, shm: &wl_shm::WlShm, qh: &QueueHandle<D>)
+    pub fn ensure_buffer<D>(&mut self, shm: &wl_shm::WlShm, qh: &QueueHandle<D>)
     where
-        D: wayland_client::Dispatch<wl_shm_pool::WlShmPool, ()>
+        D: 'static
+            + wayland_client::Dispatch<wl_shm_pool::WlShmPool, ()>
             + wayland_client::Dispatch<wl_buffer::WlBuffer, ()>,
     {
         if self.width <= 0 || self.height <= 0 {
@@ -128,12 +131,12 @@ impl DesktopSurface {
         }
     }
 
-    pub fn update_input_region<D: 'static>(
+    pub fn update_input_region<D>(
         &self,
         compositor: &wl_compositor::WlCompositor,
         qh: &QueueHandle<D>,
     ) where
-        D: wayland_client::Dispatch<wl_region::WlRegion, ()>,
+        D: 'static + wayland_client::Dispatch<wl_region::WlRegion, ()>,
     {
         if self.width <= 0 || self.height <= 0 {
             return;

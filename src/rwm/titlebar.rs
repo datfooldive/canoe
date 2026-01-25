@@ -264,7 +264,7 @@ impl Titlebar {
     }
 
     /// Ensure buffer is allocated for the given width
-    pub fn ensure_buffer<D: 'static>(
+    pub fn ensure_buffer<D>(
         &mut self,
         content_width: i32,
         content_height: i32,
@@ -273,7 +273,8 @@ impl Titlebar {
         scale: i32,
         ui: &UiConfig,
     ) where
-        D: wayland_client::Dispatch<wl_shm_pool::WlShmPool, ()>
+        D: 'static
+            + wayland_client::Dispatch<wl_shm_pool::WlShmPool, ()>
             + wayland_client::Dispatch<wl_buffer::WlBuffer, ()>,
     {
         if content_width <= 0 || content_height <= 0 {
@@ -744,13 +745,13 @@ impl Titlebar {
     }
 
     /// Limit input to the frame (titlebar + borders), let content receive clicks.
-    pub fn update_input_region<D: 'static>(
+    pub fn update_input_region<D>(
         &self,
         compositor: &wl_compositor::WlCompositor,
         qh: &QueueHandle<D>,
         ui: &UiConfig,
     ) where
-        D: wayland_client::Dispatch<wl_region::WlRegion, ()>,
+        D: 'static + wayland_client::Dispatch<wl_region::WlRegion, ()>,
     {
         if self.width <= 0 || self.height <= 0 {
             return;
@@ -783,6 +784,7 @@ impl Titlebar {
 }
 
 /// Render the title text onto the titlebar pixels
+#[allow(clippy::too_many_arguments)]
 fn render_title(
     pixels: &mut [u8],
     buffer_width: i32,
@@ -987,6 +989,7 @@ fn clear_buffer(pixels: &mut [u8]) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fill_rect(
     pixels: &mut [u8],
     buffer_width: i32,
@@ -1081,6 +1084,7 @@ fn draw_border_layer(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_button_bevel(
     pixels: &mut [u8],
     buffer_width: i32,
@@ -1185,6 +1189,7 @@ fn draw_button_bevel(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_left_border(
     pixels: &mut [u8],
     buffer_width: i32,
@@ -1211,6 +1216,7 @@ fn draw_left_border(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_glyph_close(
     pixels: &mut [u8],
     buffer_width: i32,
@@ -1240,6 +1246,7 @@ fn draw_glyph_close(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_glyph_caret(
     pixels: &mut [u8],
     buffer_width: i32,
@@ -1281,6 +1288,7 @@ fn draw_glyph_caret(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_glyph_caret_pair(
     pixels: &mut [u8],
     buffer_width: i32,

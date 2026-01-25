@@ -13,7 +13,7 @@ use rwm::Context;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::os::fd::{AsFd, AsRawFd};
+use std::os::fd::AsFd;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -375,7 +375,7 @@ fn update_titlebar_hover_from_surface(
         let ui = &state.context.borrow().config.ui;
         (ui.border_width, rwm::titlebar::titlebar_height(ui))
     };
-    let mut context = state.context.borrow_mut();
+    let context = state.context.borrow();
     let Some(window) = context.windows.get(&window_id) else {
         return false;
     };
@@ -413,7 +413,7 @@ fn update_titlebar_hover_from_global(
     let local_x = pointer_x - origin_x;
     let local_y = pointer_y - origin_y;
 
-    let mut context = state.context.borrow_mut();
+    let context = state.context.borrow();
     let Some(window) = context.windows.get(&window_id) else {
         return false;
     };
@@ -428,7 +428,7 @@ fn update_titlebar_hover_from_global(
 }
 
 fn clear_titlebar_state(state: &mut AppState, window_id: rwm::WindowId) -> bool {
-    let mut context = state.context.borrow_mut();
+    let context = state.context.borrow();
     let Some(window) = context.windows.get(&window_id) else {
         return false;
     };
@@ -902,7 +902,6 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                     }
                 }
             }
-            _ => {}
         }
     }
 
@@ -930,7 +929,7 @@ impl Dispatch<RiverWindowV1, rwm::WindowId> for AppState {
         event: river_window_management_v1::client::river_window_v1::Event,
         _window_id: &rwm::WindowId, // Don't use this - it's always 0 from event_created_child
         _conn: &Connection,
-        qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<Self>,
     ) {
         use river_window_management_v1::client::river_window_v1::Event;
 
@@ -991,11 +990,11 @@ impl Dispatch<RiverWindowV1, rwm::WindowId> for AppState {
             Event::Title { title } => {
                 window.borrow_mut().title = title;
             }
-            Event::DecorationHint { hint } => {
+            Event::DecorationHint {
+                hint: wayland_client::WEnum::Value(h),
+            } => {
                 // Convert WEnum to u32
-                if let wayland_client::WEnum::Value(h) = hint {
-                    window.borrow_mut().decoration_hint = h as u32;
-                }
+                window.borrow_mut().decoration_hint = h as u32;
             }
             Event::UnreliablePid { unreliable_pid } => {
                 let mut w = window.borrow_mut();
@@ -1013,7 +1012,7 @@ impl Dispatch<RiverWindowV1, rwm::WindowId> for AppState {
             Event::PointerMoveRequested { seat } => {
                 // Find the seat and queue move action
                 let context = state.context.borrow();
-                if let Some((seat_id, seat_rc)) = context.seats.iter().find(|(_, s)| {
+                if let Some((_seat_id, seat_rc)) = context.seats.iter().find(|(_, s)| {
                     s.borrow()
                         .rwm_seat
                         .as_ref()
@@ -1095,7 +1094,7 @@ impl Dispatch<RiverNodeV1, rwm::WindowId> for AppState {
         _event: river_window_management_v1::client::river_node_v1::Event,
         _data: &rwm::WindowId,
         _conn: &Connection,
-        qh: &QueueHandle<Self>,
+        _qh: &QueueHandle<Self>,
     ) {
         // Node events would be handled here if needed
     }
@@ -1143,7 +1142,6 @@ impl Dispatch<RiverOutputV1, rwm::OutputId> for AppState {
             Event::Dimensions { width, height } => {
                 output.borrow_mut().update_dimensions(width, height);
             }
-            _ => {}
         }
     }
 }
@@ -1414,12 +1412,12 @@ impl Dispatch<RiverLayerShellOutputV1, rwm::OutputId> for AppState {
     ) {
         use river_layer_shell_v1::client::river_layer_shell_output_v1::Event;
 
-        if let Event::NonExclusiveArea {
+        let Event::NonExclusiveArea {
             x,
             y,
             width,
             height,
-        } = event
+        } = event;
         {
             if let Some(output) = state.context.borrow().outputs.get(output_id) {
                 output
@@ -1449,7 +1447,6 @@ impl Dispatch<RiverLayerShellSeatV1, rwm::SeatId> for AppState {
                 Event::FocusNonExclusive | Event::FocusNone => {
                     seat.borrow_mut().focus_exclusive = false;
                 }
-                _ => {}
             }
         }
     }
@@ -1568,7 +1565,6 @@ impl Dispatch<RiverPointerBindingV1, (rwm::SeatId, usize)> for AppState {
                             seat_ref.queue_action(action);
                         }
                     }
-                    _ => {}
                 }
             }
         }
@@ -1587,14 +1583,11 @@ impl Dispatch<RiverInputManagerV1, ()> for AppState {
     ) {
         use river_input_management_v1::client::river_input_manager_v1::Event;
 
-        match event {
-            Event::InputDevice { id } => {
-                // Input device created - configure it
-                let config = &state.context.borrow().config;
-                id.set_repeat_info(config.repeat_rate, config.repeat_delay);
-                id.set_scroll_factor(config.scroll_factor);
-            }
-            _ => {}
+        if let Event::InputDevice { id } = event {
+            // Input device created - configure it
+            let config = &state.context.borrow().config;
+            id.set_repeat_info(config.repeat_rate, config.repeat_delay);
+            id.set_scroll_factor(config.scroll_factor);
         }
     }
 
@@ -1929,7 +1922,7 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                                             state, window_id, px as f64, py as f64,
                                         );
                                         let should_render = {
-                                            let mut context = state.context.borrow_mut();
+                                            let context = state.context.borrow();
                                             if let Some(window) = context.windows.get(&window_id) {
                                                 let mut w = window.borrow_mut();
                                                 w.titlebar_left_down = true;
@@ -1958,7 +1951,7 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                                         state, window_id, px as f64, py as f64,
                                     );
                                     let (action, should_render) = {
-                                        let mut context = state.context.borrow_mut();
+                                        let context = state.context.borrow();
                                         let Some(window) = context.windows.get(&window_id) else {
                                             return;
                                         };
@@ -2111,6 +2104,7 @@ impl Dispatch<WpCursorShapeDeviceV1, ()> for AppState {
 
 // Titlebar surface user data
 struct TitlebarSurfaceData {
+    #[allow(dead_code)]
     window_id: rwm::WindowId,
 }
 
@@ -2149,40 +2143,37 @@ impl Dispatch<wl_output::WlOutput, ()> for AppState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        match _event {
-            wl_output::Event::Scale { factor } => {
-                let scale = factor.max(1);
-                let output_name = _state.globals.wl_outputs.iter().find_map(|(name, output)| {
-                    if output == _proxy {
-                        Some(*name)
-                    } else {
-                        None
-                    }
-                });
-                if let Some(name) = output_name {
-                    _state.globals.wl_output_scales.insert(name, scale);
+        if let wl_output::Event::Scale { factor } = _event {
+            let scale = factor.max(1);
+            let output_name = _state.globals.wl_outputs.iter().find_map(|(name, output)| {
+                if output == _proxy {
+                    Some(*name)
+                } else {
+                    None
                 }
-                let outputs = {
-                    let context = _state.context.borrow();
-                    context
-                        .outputs
-                        .values()
-                        .filter(|output| {
-                            let out = output.borrow();
-                            if let Some(name) = output_name {
-                                out.wl_output_name == name
-                            } else {
-                                out.wl_output.as_ref().map(|o| o == _proxy).unwrap_or(false)
-                            }
-                        })
-                        .cloned()
-                        .collect::<Vec<_>>()
-                };
-                for output in outputs {
-                    output.borrow_mut().scale = scale;
-                }
+            });
+            if let Some(name) = output_name {
+                _state.globals.wl_output_scales.insert(name, scale);
             }
-            _ => {}
+            let outputs = {
+                let context = _state.context.borrow();
+                context
+                    .outputs
+                    .values()
+                    .filter(|output| {
+                        let out = output.borrow();
+                        if let Some(name) = output_name {
+                            out.wl_output_name == name
+                        } else {
+                            out.wl_output.as_ref().map(|o| o == _proxy).unwrap_or(false)
+                        }
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+            for output in outputs {
+                output.borrow_mut().scale = scale;
+            }
         }
     }
 }
@@ -2257,7 +2248,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Prepare poll file descriptors
         let wayland_fd = conn.as_fd();
-        let signal_raw_fd = signal_fd.as_raw_fd();
 
         let mut poll_fds = [
             PollFd::new(wayland_fd, PollFlags::POLLIN),

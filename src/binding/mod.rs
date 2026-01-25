@@ -1,5 +1,7 @@
 //! Key and pointer binding handling
 
+#![allow(dead_code)]
+
 pub mod action;
 mod pointer;
 mod xkb;

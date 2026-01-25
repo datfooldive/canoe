@@ -1,5 +1,7 @@
 //! Configuration for the River window manager
 
+#![allow(dead_code)]
+
 use crate::rule::Rule;
 use serde::de::{self, Deserializer};
 use serde::Deserialize;

@@ -1,5 +1,7 @@
 //! Pointer (mouse) bindings
 
+#![allow(dead_code)]
+
 use super::{Action, Binding, BindingEvent};
 use crate::config::Mode;
 

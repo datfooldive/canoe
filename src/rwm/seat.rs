@@ -1,5 +1,7 @@
 //! Seat (input) management
 
+#![allow(dead_code)]
+
 use crate::binding::{Action, PointerBinding, XkbBinding};
 use crate::config::Mode;
 use crate::protocol::{

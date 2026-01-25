@@ -444,15 +444,14 @@ impl Context {
                 }
             }
             Action::ActivateMenuHovered => {
-                if self.window_menu_mode == Some(WindowMenuMode::Pointer) {
-                    if self
+                if self.window_menu_mode == Some(WindowMenuMode::Pointer)
+                    && self
                         .window_menu
                         .as_ref()
                         .and_then(|menu| menu.hovered)
                         .is_some()
-                    {
-                        self.activate_menu_hovered();
-                    }
+                {
+                    self.activate_menu_hovered();
                 }
             }
             Action::WindowMenuCycle => {
@@ -535,13 +534,10 @@ impl Context {
                 // Make sure child inherits display environment
                 // (WAYLAND_DISPLAY should already be in env)
 
-                match cmd.exec() {
-                    // exec() only returns on error
-                    err => {
-                        eprintln!("Failed to exec {:?}: {:?}", argv, err);
-                        std::process::exit(1);
-                    }
-                }
+                let err = cmd.exec();
+                // exec() only returns on error
+                eprintln!("Failed to exec {:?}: {:?}", argv, err);
+                std::process::exit(1);
             }
             Err(e) => {
                 log::error!("Failed to fork for spawn {:?}: {}", argv, e);
@@ -1268,7 +1264,6 @@ impl Context {
                     }
                 }
             }
-            _ => {}
         }
     }
 

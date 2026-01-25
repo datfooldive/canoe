@@ -1,5 +1,7 @@
 //! Window rules for matching and applying settings
 
+#![allow(dead_code)]
+
 use crate::config::WindowDecoration;
 use regex::Regex;
 
