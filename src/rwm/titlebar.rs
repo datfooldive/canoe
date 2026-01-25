@@ -526,7 +526,6 @@ impl Titlebar {
                             &icons.close,
                             icon_x,
                             icon_y,
-                            button_border,
                         );
                     }
                 } else {
@@ -592,7 +591,6 @@ impl Titlebar {
                             &icons.minimize,
                             icon_x,
                             icon_y,
-                            button_border,
                         );
                     }
                 } else {
@@ -649,15 +647,7 @@ impl Titlebar {
                         } else {
                             &icons.maximize
                         };
-                        draw_svg_icon(
-                            pixels,
-                            buffer_width,
-                            buffer_height,
-                            icon,
-                            icon_x,
-                            icon_y,
-                            button_border,
-                        );
+                        draw_svg_icon(pixels, buffer_width, buffer_height, icon, icon_x, icon_y);
                     }
                 } else if is_maximized {
                     draw_glyph_caret_pair(
@@ -907,7 +897,6 @@ fn draw_svg_icon(
     icon: &tiny_skia::Pixmap,
     x: i32,
     y: i32,
-    color_argb: u32,
 ) {
     if buffer_width <= 0 || buffer_height <= 0 {
         return;
@@ -934,17 +923,44 @@ fn draw_svg_icon(
             let src_x = col - x;
             let src_offset = ((src_y * icon_w + src_x) * 4) as usize;
             if src_offset + 4 <= icon_data.len() {
-                let alpha = icon_data[src_offset + 3];
-                if alpha == 0 {
+                let src_r = icon_data[src_offset];
+                let src_g = icon_data[src_offset + 1];
+                let src_b = icon_data[src_offset + 2];
+                let src_a = icon_data[src_offset + 3];
+                if src_a == 0 {
                     continue;
                 }
                 let dst_offset = ((row * buffer_width + col) * 4) as usize;
                 if dst_offset + 4 <= pixels.len() {
-                    blend_pixel(&mut pixels[dst_offset..dst_offset + 4], color_argb, alpha);
+                    blend_pixel_premul(
+                        &mut pixels[dst_offset..dst_offset + 4],
+                        src_r,
+                        src_g,
+                        src_b,
+                        src_a,
+                    );
                 }
             }
         }
     }
+}
+
+/// Alpha blend a premultiplied RGBA source over an ARGB destination.
+fn blend_pixel_premul(bg: &mut [u8], src_r: u8, src_g: u8, src_b: u8, src_a: u8) {
+    let inv_a = 255u16.saturating_sub(src_a as u16);
+
+    // Read background (native endian ARGB)
+    let bg_val = u32::from_ne_bytes([bg[0], bg[1], bg[2], bg[3]]);
+    let bg_r = ((bg_val >> 16) & 0xff) as u16;
+    let bg_g = ((bg_val >> 8) & 0xff) as u16;
+    let bg_b = (bg_val & 0xff) as u16;
+
+    let out_r = (src_r as u16 + (bg_r * inv_a) / 255) as u8;
+    let out_g = (src_g as u16 + (bg_g * inv_a) / 255) as u8;
+    let out_b = (src_b as u16 + (bg_b * inv_a) / 255) as u8;
+
+    let out_argb = 0xFF000000 | ((out_r as u32) << 16) | ((out_g as u32) << 8) | (out_b as u32);
+    bg.copy_from_slice(&out_argb.to_ne_bytes());
 }
 
 /// Convert RGBA (0xRRGGBBAA) to ARGB (0xAARRGGBB) for wl_shm format
