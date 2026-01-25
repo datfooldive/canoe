@@ -85,7 +85,7 @@ impl Default for BorderLayers {
     fn default() -> Self {
         Self {
             outer: 0x000000FF,
-            mid: 0x888888FF,
+            mid: 0xC0C0C0FF,
             inner: 0x000000FF,
         }
     }
@@ -182,22 +182,22 @@ pub struct UiConfig {
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
-            border_width: 5,
+            border_width: 4,
             border_active: BorderLayers::default(),
             border_inactive: BorderLayers::default(),
             titlebar_text_active: 0xFFFFFFFF,
             titlebar_text_inactive: 0xFFFFFFFF,
-            titlebar_bg_active: 0x2F6BFFFF,
-            titlebar_bg_inactive: 0x666666FF,
+            titlebar_bg_active: 0x000080FF,
+            titlebar_bg_inactive: 0xFFFFFFFF,
             menu_bg: 0xC0C0C0FF,
             menu_text: 0x000000FF,
-            menu_highlight_bg: 0x2F6BFFFF,
+            menu_highlight_bg: 0x000080FF,
             menu_highlight_text: 0xFFFFFFFF,
             button_bg: 0xC0C0C0FF,
             button_highlight: 0xFFFFFFFF,
             button_shadow: 0x808080FF,
             font_name: None,
-            font_size: 14.0,
+            font_size: 12.0,
             desktop_background: 0x008080FF,
         }
     }

@@ -20,7 +20,6 @@ pub fn titlebar_height(ui: &UiConfig) -> i32 {
 const BUTTON_BG_PRESSED_LEFT: u32 = 0xA0A0A0FF;
 
 const BORDER_OUTER: i32 = 1;
-const BORDER_MID: i32 = 3;
 const BORDER_INNER: i32 = 1;
 
 /// Horizontal padding for title text
@@ -443,6 +442,7 @@ impl Titlebar {
             } else {
                 ui.border_inactive
             };
+            let mid_width = (ui.border_width - BORDER_INNER - BORDER_OUTER).max(0);
             draw_border_layer(
                 pixels,
                 buffer_width,
@@ -456,14 +456,14 @@ impl Titlebar {
                 buffer_width,
                 buffer_height,
                 border_offset + BORDER_OUTER * scale,
-                BORDER_MID * scale,
+                mid_width * scale,
                 border_colors.mid,
             );
             draw_border_layer(
                 pixels,
                 buffer_width,
                 buffer_height,
-                border_offset + (BORDER_OUTER + BORDER_MID) * scale,
+                border_offset + (BORDER_OUTER + mid_width) * scale,
                 BORDER_INNER * scale,
                 border_colors.inner,
             );
