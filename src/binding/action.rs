@@ -1,7 +1,6 @@
 //! Binding actions - what happens when a binding is triggered
 
 use crate::config::Mode;
-use crate::layout::LayoutType;
 
 /// Direction for iteration/movement
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,7 +28,6 @@ pub struct Step {
 /// Window manager state for custom actions
 #[derive(Debug, Clone)]
 pub struct State {
-    pub layout: Option<LayoutType>,
     pub output_tag: u32,
     pub focused_window_tag: Option<u32>,
 }
@@ -93,8 +91,6 @@ pub enum Action {
 
     /// Switch input mode
     SwitchMode { mode: Mode },
-    /// Switch layout type
-    SwitchLayout { layout: LayoutType },
 
     /// Toggle fullscreen
     ToggleFullscreen { in_window: bool },

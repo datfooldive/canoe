@@ -1,12 +1,10 @@
 //! Configuration for the River window manager
 
-use crate::layout::LayoutType;
 use crate::rule::Rule;
 use serde::de::{self, Deserializer};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{LazyLock, RwLock};
 
 /// Mouse button codes (Linux input event codes)
 pub mod button {
@@ -203,123 +201,6 @@ impl Default for UiConfig {
     }
 }
 
-/// Tile layout configuration
-#[derive(Debug, Clone, Copy)]
-pub struct TileConfig {
-    pub nmaster: u32,
-    pub mfact: f32,
-    pub inner_gap: i32,
-    pub outer_gap: i32,
-    pub master_location: MasterLocation,
-}
-
-impl Default for TileConfig {
-    fn default() -> Self {
-        Self {
-            nmaster: 1,
-            mfact: 0.55,
-            inner_gap: 12,
-            outer_gap: 9,
-            master_location: MasterLocation::Left,
-        }
-    }
-}
-
-/// Master area location for tile layout
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum MasterLocation {
-    #[default]
-    Left,
-    Right,
-    Top,
-    Bottom,
-}
-
-/// Grid layout configuration
-#[derive(Debug, Clone, Copy)]
-pub struct GridConfig {
-    pub outer_gap: i32,
-    pub inner_gap: i32,
-    pub direction: GridDirection,
-}
-
-impl Default for GridConfig {
-    fn default() -> Self {
-        Self {
-            outer_gap: 9,
-            inner_gap: 12,
-            direction: GridDirection::Horizontal,
-        }
-    }
-}
-
-/// Grid layout direction
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum GridDirection {
-    #[default]
-    Horizontal,
-    Vertical,
-}
-
-/// Monocle layout configuration
-#[derive(Debug, Clone, Copy)]
-pub struct MonocleConfig {
-    pub gap: i32,
-}
-
-impl Default for MonocleConfig {
-    fn default() -> Self {
-        Self { gap: 9 }
-    }
-}
-
-/// Scroller layout configuration
-#[derive(Debug, Clone, Copy)]
-pub struct ScrollerConfig {
-    pub mfact: f32,
-    pub inner_gap: i32,
-    pub outer_gap: i32,
-    pub snap_to_left: bool,
-}
-
-impl Default for ScrollerConfig {
-    fn default() -> Self {
-        Self {
-            mfact: 0.5,
-            inner_gap: 16,
-            outer_gap: 9,
-            snap_to_left: false,
-        }
-    }
-}
-
-/// Runtime-mutable configuration values
-pub struct MutableConfig {
-    pub tile: TileConfig,
-    pub grid: GridConfig,
-    pub monocle: MonocleConfig,
-    pub scroller: ScrollerConfig,
-    pub border_width: i32,
-    pub auto_swallow: bool,
-}
-
-impl Default for MutableConfig {
-    fn default() -> Self {
-        Self {
-            tile: TileConfig::default(),
-            grid: GridConfig::default(),
-            monocle: MonocleConfig::default(),
-            scroller: ScrollerConfig::default(),
-            border_width: 5, // 5px layered border
-            auto_swallow: true,
-        }
-    }
-}
-
-/// Global mutable configuration
-pub static MUTABLE_CONFIG: LazyLock<RwLock<MutableConfig>> =
-    LazyLock::new(|| RwLock::new(MutableConfig::default()));
-
 /// Main configuration structure
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -338,7 +219,6 @@ pub struct Config {
     pub border_color: BorderColor,
     pub ui: UiConfig,
 
-    pub default_layout: LayoutType,
     pub tags: Vec<String>,
     pub rules: Vec<Rule>,
 }
@@ -361,7 +241,6 @@ impl Default for Config {
             border_color: BorderColor::default(),
             ui: UiConfig::default(),
 
-            default_layout: LayoutType::Tile,
             tags: (1..=9).map(|i| i.to_string()).collect(),
             rules: default_rules(),
         }
@@ -516,10 +395,6 @@ pub fn load_config() -> Config {
         }
     }
 
-    if let Ok(mut mutable) = MUTABLE_CONFIG.write() {
-        mutable.border_width = config.ui.border_width;
-    }
-
     config
 }
 
@@ -550,42 +425,14 @@ fn default_rules() -> Vec<Rule> {
         Rule {
             app_id: Some("chromium".to_string()),
             tag: Some(1 << 1),
-            scroller_mfact: Some(0.9),
             ..Default::default()
         },
         Rule {
             app_id: Some("foot".to_string()),
             is_terminal: Some(true),
-            scroller_mfact: Some(0.8),
             ..Default::default()
         },
     ]
-}
-
-/// Get layout tag string for display
-pub fn layout_tag(layout: LayoutType) -> &'static str {
-    let config = MUTABLE_CONFIG.read().unwrap();
-    match layout {
-        LayoutType::Tile => match config.tile.master_location {
-            MasterLocation::Left => "[]=",
-            MasterLocation::Right => "=[]",
-            MasterLocation::Top => "[^]",
-            MasterLocation::Bottom => "[_]",
-        },
-        LayoutType::Grid => match config.grid.direction {
-            GridDirection::Horizontal => "|+|",
-            GridDirection::Vertical => "|||",
-        },
-        LayoutType::Monocle => "[=]",
-        LayoutType::Scroller => {
-            if config.scroller.snap_to_left {
-                "[<-]"
-            } else {
-                "[==]"
-            }
-        }
-        LayoutType::Float => "><>",
-    }
 }
 
 /// Helper module for home directory

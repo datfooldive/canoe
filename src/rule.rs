@@ -63,8 +63,6 @@ pub struct Rule {
     pub is_terminal: Option<bool>,
     /// Whether to disable swallowing for this window
     pub disable_swallow: Option<bool>,
-    /// Scroller layout master factor for this window
-    pub scroller_mfact: Option<f32>,
 }
 
 impl Rule {
@@ -119,9 +117,6 @@ pub fn apply_rules(rules: &[Rule], app_id: Option<&str>, title: Option<&str>) ->
             if let Some(disable_swallow) = rule.disable_swallow {
                 applied.disable_swallow = Some(disable_swallow);
             }
-            if let Some(mfact) = rule.scroller_mfact {
-                applied.scroller_mfact = Some(mfact);
-            }
         }
     }
 
@@ -136,7 +131,6 @@ pub struct AppliedRules {
     pub decoration: Option<WindowDecoration>,
     pub is_terminal: Option<bool>,
     pub disable_swallow: Option<bool>,
-    pub scroller_mfact: Option<f32>,
 }
 
 #[cfg(test)]
@@ -178,7 +172,6 @@ mod tests {
             Rule {
                 app_id: Some("foot".to_string()),
                 is_terminal: Some(true),
-                scroller_mfact: Some(0.8),
                 ..Default::default()
             },
             Rule {
@@ -190,7 +183,6 @@ mod tests {
 
         let applied = apply_rules(&rules, Some("foot"), None);
         assert_eq!(applied.is_terminal, Some(true));
-        assert_eq!(applied.scroller_mfact, Some(0.8));
 
         let applied = apply_rules(&rules, Some("chromium"), None);
         assert_eq!(applied.tag, Some(1 << 1));

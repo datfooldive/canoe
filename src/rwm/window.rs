@@ -147,9 +147,6 @@ pub struct Window {
     pub unhandled_events: VecDeque<WindowEvent>,
     /// Position is undefined (newly created)
     pub position_undefined: bool,
-    /// Per-window scroller mfact
-    pub scroller_mfact: Option<f32>,
-
     /// Titlebar for server-side decoration
     pub titlebar: Option<super::Titlebar>,
     /// Hovered titlebar button (if any)
@@ -162,7 +159,7 @@ pub struct Window {
     /// Window needs to be configured (propose_dimensions)
     pub needs_configure: bool,
 
-    /// Proposed dimensions (for layout)
+    /// Proposed dimensions (for sizing)
     proposed_width: i32,
     proposed_height: i32,
 }
@@ -201,7 +198,6 @@ impl Window {
             operator: Operator::None,
             unhandled_events: VecDeque::new(),
             position_undefined: true,
-            scroller_mfact: None,
             titlebar: None,
             titlebar_hovered: None,
             titlebar_pressed: None,
@@ -231,7 +227,7 @@ impl Window {
         (self.tag & output.tag) != 0
     }
 
-    /// Check if window should be included in layout
+    /// Check if window should be treated as tiled
     pub fn is_tiled(&self) -> bool {
         !self.floating && matches!(self.fullscreen, FullscreenState::None)
     }
@@ -249,7 +245,7 @@ impl Window {
         }
     }
 
-    /// Propose dimensions for the window (used during layout)
+    /// Propose dimensions for the window
     pub fn propose_dimensions(&mut self, width: i32, height: i32) {
         self.proposed_width = width.max(self.min_width);
         self.proposed_height = height.max(self.min_height);

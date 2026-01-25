@@ -1,6 +1,5 @@
 //! Output (display) management
 
-use crate::layout::LayoutType;
 use crate::protocol::{RiverLayerShellOutputV1, RiverOutputV1};
 use std::cell::RefCell;
 use std::rc::Weak;
@@ -40,15 +39,12 @@ pub struct Output {
 
     /// Current visible tags
     pub tag: u32,
-    /// Main active tag (for layout selection)
+    /// Main active tag
     pub main_tag: u32,
     /// Previous tag state (for switching back)
     pub prev_tag: u32,
     /// Previous main tag
     pub prev_main_tag: u32,
-
-    /// Layout type per tag (32 tags)
-    pub layout_per_tag: [LayoutType; 32],
 
     /// Currently fullscreen window on this output
     pub fullscreen_window: Option<Weak<RefCell<super::Window>>>,
@@ -68,7 +64,7 @@ pub struct Output {
 
 impl Output {
     /// Create a new output
-    pub fn new(id: OutputId, default_layout: LayoutType) -> Self {
+    pub fn new(id: OutputId) -> Self {
         Self {
             id,
             rwm_output: None,
@@ -85,7 +81,6 @@ impl Output {
             main_tag: 1,
             prev_tag: 1,
             prev_main_tag: 1,
-            layout_per_tag: [default_layout; 32],
             fullscreen_window: None,
             exclusive_x: 0,
             exclusive_y: 0,
@@ -93,34 +88,6 @@ impl Output {
             exclusive_height: 0,
             desktop_surface: None,
             removed: false,
-        }
-    }
-
-    /// Get the current layout type for this output
-    pub fn current_layout(&self) -> LayoutType {
-        // Find the first set bit in main_tag to determine the layout
-        if self.main_tag == 0 {
-            return self.layout_per_tag[0];
-        }
-
-        let tag_index = self.main_tag.trailing_zeros() as usize;
-        if tag_index < 32 {
-            self.layout_per_tag[tag_index]
-        } else {
-            self.layout_per_tag[0]
-        }
-    }
-
-    /// Set the layout for the current main tag
-    pub fn set_layout(&mut self, layout: LayoutType) {
-        if self.main_tag == 0 {
-            self.layout_per_tag[0] = layout;
-            return;
-        }
-
-        let tag_index = self.main_tag.trailing_zeros() as usize;
-        if tag_index < 32 {
-            self.layout_per_tag[tag_index] = layout;
         }
     }
 
@@ -226,7 +193,6 @@ impl std::fmt::Debug for Output {
             .field("width", &self.width)
             .field("height", &self.height)
             .field("tag", &self.tag)
-            .field("layout", &self.current_layout())
             .finish()
     }
 }

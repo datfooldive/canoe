@@ -2,7 +2,6 @@
 
 use crate::binding::{Action, Direction, Edge, PointerBinding, XkbBinding};
 use crate::config::{load_config, Config};
-use crate::layout::{self, LayoutArea, LayoutWindow};
 use crate::protocol::river_window_management_v1::client::river_window_v1::Edges;
 use crate::protocol::*;
 use crate::rule;
@@ -149,7 +148,7 @@ impl Context {
         let id = self.next_output_id;
         self.next_output_id += 1;
 
-        let mut output = Output::new(id, self.config.default_layout);
+        let mut output = Output::new(id);
         output.rwm_output = Some(rwm_output);
 
         let output = Rc::new(RefCell::new(output));
@@ -253,9 +252,6 @@ impl Context {
         }
         if let Some(disable_swallow) = applied.disable_swallow {
             window.disable_swallow = disable_swallow;
-        }
-        if let Some(mfact) = applied.scroller_mfact {
-            window.scroller_mfact = Some(mfact);
         }
     }
 
@@ -378,14 +374,6 @@ impl Context {
                     seat.borrow_mut().switch_mode(mode);
                 }
             }
-            Action::SwitchLayout { layout } => {
-                if let Some(output_id) = self.current_output {
-                    if let Some(output) = self.outputs.get(&output_id) {
-                        output.borrow_mut().set_layout(layout);
-                        self.arrange_output(output_id);
-                    }
-                }
-            }
             Action::ToggleFullscreen { in_window } => {
                 self.toggle_fullscreen(in_window);
             }
@@ -497,11 +485,6 @@ impl Context {
 
     /// Get current state for custom actions
     pub fn get_state(&self) -> crate::binding::State {
-        let layout = self
-            .current_output
-            .and_then(|id| self.outputs.get(&id))
-            .map(|o| o.borrow().current_layout());
-
         let output_tag = self
             .current_output
             .and_then(|id| self.outputs.get(&id))
@@ -514,7 +497,6 @@ impl Context {
             .map(|w| w.borrow().tag);
 
         crate::binding::State {
-            layout,
             output_tag,
             focused_window_tag,
         }
@@ -1158,7 +1140,7 @@ impl Context {
         }
     }
 
-    /// Handle manage_start event - process pending window events and arrange layout
+    /// Handle manage_start event - process pending window events and arrange windows
     pub fn handle_manage_start(&mut self) {
         // Process seat actions
         let seat_ids: Vec<SeatId> = self.seats.keys().copied().collect();

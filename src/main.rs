@@ -4,7 +4,6 @@
 
 mod binding;
 mod config;
-mod layout;
 mod protocol;
 mod rule;
 mod rwm;
