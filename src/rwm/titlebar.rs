@@ -7,7 +7,9 @@ use resvg::{tiny_skia, usvg};
 use std::os::fd::AsFd;
 use std::path::Path;
 use std::sync::OnceLock;
-use wayland_client::protocol::{wl_buffer, wl_compositor, wl_region, wl_shm, wl_shm_pool, wl_surface};
+use wayland_client::protocol::{
+    wl_buffer, wl_compositor, wl_region, wl_shm, wl_shm_pool, wl_surface,
+};
 use wayland_client::QueueHandle;
 
 /// Titlebar height in pixels
@@ -43,10 +45,7 @@ pub struct Rect {
 
 impl Rect {
     pub fn contains(&self, px: i32, py: i32) -> bool {
-        px >= self.x
-            && px < self.x + self.width
-            && py >= self.y
-            && py < self.y + self.height
+        px >= self.x && px < self.x + self.width && py >= self.y && py < self.y + self.height
     }
 }
 
@@ -515,9 +514,9 @@ impl Titlebar {
                 if icons_ready {
                     let icon_x =
                         (title_x + buttons.close.x + (buttons.close.width - icon_size) / 2) * scale;
-                    let icon_y = (title_y + buttons.close.y
-                        + (buttons.close.height - icon_size) / 2)
-                        * scale;
+                    let icon_y =
+                        (title_y + buttons.close.y + (buttons.close.height - icon_size) / 2)
+                            * scale;
                     if let Some(ref icons) = self.icon_cache {
                         draw_svg_icon(
                             pixels,
@@ -701,8 +700,8 @@ impl Titlebar {
                 // Render title text if we have a title and font
                 if let Some(title_str) = title {
                     if !title_str.is_empty() {
-                        let text_start = (buttons.close.x + buttons.close.width + BUTTON_GAP)
-                            .max(0);
+                        let text_start =
+                            (buttons.close.x + buttons.close.width + BUTTON_GAP).max(0);
                         let text_end = (buttons.maximize.x - BUTTON_GAP).min(content_width);
                         let text_width = (text_end - text_start).max(0);
                         if text_width > 0 {
@@ -860,7 +859,11 @@ fn render_title(
                             if px_bold < origin_x + area_width && px_bold < buffer_width {
                                 let offset_bold = ((py * buffer_width + px_bold) * 4) as usize;
                                 if offset_bold + 4 <= pixels.len() {
-                                    blend_pixel(&mut pixels[offset_bold..offset_bold + 4], text_argb, alpha);
+                                    blend_pixel(
+                                        &mut pixels[offset_bold..offset_bold + 4],
+                                        text_argb,
+                                        alpha,
+                                    );
                                 }
                             }
                         }

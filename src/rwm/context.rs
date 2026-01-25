@@ -14,7 +14,9 @@ use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::rc::Rc;
 
-use super::{MenuItem, Output, OutputId, Seat, SeatId, Window, WindowId, WindowMenu, WindowMenuMode};
+use super::{
+    MenuItem, Output, OutputId, Seat, SeatId, Window, WindowId, WindowMenu, WindowMenuMode,
+};
 
 /// The central window manager context
 pub struct Context {
@@ -195,11 +197,15 @@ impl Context {
 
     /// Set up bindings for a seat
     fn setup_seat_bindings(&self, seat: &mut Seat) {
-        use crate::binding::action::{default_pointer_bindings, default_tag_bindings, default_xkb_bindings};
+        use crate::binding::action::{
+            default_pointer_bindings, default_tag_bindings, default_xkb_bindings,
+        };
 
         // Add XKB bindings
         for (mode, keysym, modifiers, action, event) in default_xkb_bindings() {
-            seat.add_xkb_binding(XkbBinding::new(mode, keysym, modifiers, action).with_event(event));
+            seat.add_xkb_binding(
+                XkbBinding::new(mode, keysym, modifiers, action).with_event(event),
+            );
         }
 
         // Add tag bindings
@@ -451,7 +457,12 @@ impl Context {
             }
             Action::ActivateMenuHovered => {
                 if self.window_menu_mode == Some(WindowMenuMode::Pointer) {
-                    if self.window_menu.as_ref().and_then(|menu| menu.hovered).is_some() {
+                    if self
+                        .window_menu
+                        .as_ref()
+                        .and_then(|menu| menu.hovered)
+                        .is_some()
+                    {
                         self.activate_menu_hovered();
                     }
                 }
@@ -465,7 +476,12 @@ impl Context {
             }
             Action::WindowMenuCommit => {
                 if self.window_menu_mode == Some(WindowMenuMode::AltTab) {
-                    if self.window_menu.as_ref().and_then(|menu| menu.hovered).is_some() {
+                    if self
+                        .window_menu
+                        .as_ref()
+                        .and_then(|menu| menu.hovered)
+                        .is_some()
+                    {
                         self.activate_menu_hovered();
                     } else {
                         self.close_window_menu();
@@ -696,7 +712,10 @@ impl Context {
 
         // Swap in focus stack
         let focused_pos = self.focus_stack.iter().position(|&id| id == focused_id);
-        let swap_pos = self.focus_stack.iter().position(|&id| id == tiled[swap_idx]);
+        let swap_pos = self
+            .focus_stack
+            .iter()
+            .position(|&id| id == tiled[swap_idx]);
 
         if let (Some(fp), Some(sp)) = (focused_pos, swap_pos) {
             self.focus_stack.swap(fp, sp);
@@ -896,13 +915,11 @@ impl Context {
 
     /// Snap focused window to edge
     fn snap_focused_window(&mut self, edge: Edge) {
-        let (output_x, output_y, output_w, output_h) = match self
-            .current_output
-            .and_then(|id| self.outputs.get(&id))
-        {
-            Some(o) => o.borrow().usable_area(),
-            None => return,
-        };
+        let (output_x, output_y, output_w, output_h) =
+            match self.current_output.and_then(|id| self.outputs.get(&id)) {
+                Some(o) => o.borrow().usable_area(),
+                None => return,
+            };
 
         if let Some(window_id) = self.focused_window {
             if let Some(window) = self.windows.get(&window_id) {
@@ -985,7 +1002,13 @@ impl Context {
         let output = self
             .windows
             .get(&window_id)
-            .and_then(|window| window.borrow().output.as_ref().and_then(|weak| weak.upgrade()))
+            .and_then(|window| {
+                window
+                    .borrow()
+                    .output
+                    .as_ref()
+                    .and_then(|weak| weak.upgrade())
+            })
             .or_else(|| {
                 self.current_output
                     .and_then(|oid| self.outputs.get(&oid))
@@ -1077,7 +1100,8 @@ impl Context {
                             let output_ref = output.borrow();
                             if let Some(ref rwm_output) = output_ref.rwm_output {
                                 w.fullscreen_on(rwm_output);
-                                w.fullscreen = super::window::FullscreenState::Output(Rc::downgrade(output));
+                                w.fullscreen =
+                                    super::window::FullscreenState::Output(Rc::downgrade(output));
                             }
                         }
                     }
@@ -1375,7 +1399,9 @@ impl Context {
             let target_w = (area_w / 2).max(1);
             let target_h = (area_h / 2).max(1);
             let pad_x = 10 + self.config.ui.border_width;
-            let pad_y = 10 + self.config.ui.border_width + super::titlebar::titlebar_height(&self.config.ui);
+            let pad_y = 10
+                + self.config.ui.border_width
+                + super::titlebar::titlebar_height(&self.config.ui);
             let start_x = area_x + pad_x;
             let start_y = area_y + pad_y;
             let mut end_x = area_x + area_w - target_w - pad_x;
@@ -1512,8 +1538,11 @@ impl Context {
 
         if let Some(window_id) = self.focused_window {
             if let Some(window) = self.windows.get(&window_id) {
-                if let super::window::Operator::Resize { edges: op_edges, seat: Some(op_seat), .. } =
-                    &window.borrow().operator
+                if let super::window::Operator::Resize {
+                    edges: op_edges,
+                    seat: Some(op_seat),
+                    ..
+                } = &window.borrow().operator
                 {
                     if let Some(op_seat) = op_seat.upgrade() {
                         if op_seat.borrow().id == seat_id {
@@ -1679,14 +1708,7 @@ fn cursor_shape_for_edges(edges: u32) -> Option<CursorShape> {
     None
 }
 
-fn point_in_titlebar(
-    x: i32,
-    y: i32,
-    width: i32,
-    titlebar_height: i32,
-    px: i32,
-    py: i32,
-) -> bool {
+fn point_in_titlebar(x: i32, y: i32, width: i32, titlebar_height: i32, px: i32, py: i32) -> bool {
     if width <= 0 || titlebar_height <= 0 {
         return false;
     }
@@ -1705,7 +1727,11 @@ fn window_matches_output(output: &Output, window: &Window) -> bool {
     (window.tag & output.tag) != 0
 }
 
-fn menu_item_from_window(window_id: WindowId, focused: Option<WindowId>, window: &Window) -> MenuItem {
+fn menu_item_from_window(
+    window_id: WindowId,
+    focused: Option<WindowId>,
+    window: &Window,
+) -> MenuItem {
     let title = window
         .title
         .as_ref()

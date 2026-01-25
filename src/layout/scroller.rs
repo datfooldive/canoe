@@ -37,10 +37,7 @@ impl Layout for ScrollerLayout {
         }
 
         // Find focused window index
-        let focused_idx = windows
-            .iter()
-            .position(|w| w.focused)
-            .unwrap_or(0);
+        let focused_idx = windows.iter().position(|w| w.focused).unwrap_or(0);
 
         let mut geometries = Vec::with_capacity(n);
 

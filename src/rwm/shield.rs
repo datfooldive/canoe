@@ -26,7 +26,11 @@ pub struct ShieldSurface {
 }
 
 impl ShieldSurface {
-    pub fn new(surface: wl_surface::WlSurface, layer_surface: ZwlrLayerSurfaceV1, output_id: OutputId) -> Self {
+    pub fn new(
+        surface: wl_surface::WlSurface,
+        layer_surface: ZwlrLayerSurfaceV1,
+        output_id: OutputId,
+    ) -> Self {
         Self {
             surface,
             layer_surface,

@@ -120,7 +120,10 @@ impl WindowMenu {
         let content_y = MENU_BORDER;
         let content_w = content_w - MENU_BORDER * 2;
         let content_h = content_h - MENU_BORDER * 2;
-        if x < content_x || y < content_y || x >= content_x + content_w || y >= content_y + content_h
+        if x < content_x
+            || y < content_y
+            || x >= content_x + content_w
+            || y >= content_y + content_h
         {
             return None;
         }
@@ -172,8 +175,7 @@ impl WindowMenu {
         shm: &wl_shm::WlShm,
         qh: &QueueHandle<D>,
         scale: i32,
-    )
-    where
+    ) where
         D: wayland_client::Dispatch<wl_shm_pool::WlShmPool, ()>
             + wayland_client::Dispatch<wl_buffer::WlBuffer, ()>,
     {
@@ -442,10 +444,7 @@ fn measure_menu(items: &[MenuItem], theme: &MenuTheme) -> (i32, i32) {
         None => {
             let menu_w = 120;
             let menu_h = (items.len() as i32 * item_height(theme)).max(1) + MENU_BORDER * 2;
-            return (
-                menu_w + SHADOW_SIZE,
-                menu_h + SHADOW_SIZE,
-            );
+            return (menu_w + SHADOW_SIZE, menu_h + SHADOW_SIZE);
         }
     };
 
@@ -461,10 +460,7 @@ fn measure_menu(items: &[MenuItem], theme: &MenuTheme) -> (i32, i32) {
     let content_h = item_height(theme) * items.len() as i32;
     let menu_w = content_w + MENU_BORDER * 2;
     let menu_h = content_h + MENU_BORDER * 2;
-    (
-        menu_w + SHADOW_SIZE,
-        menu_h + SHADOW_SIZE,
-    )
+    (menu_w + SHADOW_SIZE, menu_h + SHADOW_SIZE)
 }
 
 fn measure_text(font: &Font, text: &str, font_size: f32) -> f32 {
@@ -675,7 +671,16 @@ fn draw_border_rect(
         return;
     }
 
-    fill_rect(pixels, buffer_width, buffer_height, x, y, width, 1, color_argb);
+    fill_rect(
+        pixels,
+        buffer_width,
+        buffer_height,
+        x,
+        y,
+        width,
+        1,
+        color_argb,
+    );
     fill_rect(
         pixels,
         buffer_width,
@@ -686,7 +691,16 @@ fn draw_border_rect(
         1,
         color_argb,
     );
-    fill_rect(pixels, buffer_width, buffer_height, x, y, 1, height, color_argb);
+    fill_rect(
+        pixels,
+        buffer_width,
+        buffer_height,
+        x,
+        y,
+        1,
+        height,
+        color_argb,
+    );
     fill_rect(
         pixels,
         buffer_width,
@@ -748,7 +762,16 @@ fn draw_dashed_rect(
     let mut px = x;
     while px < x + width {
         let segment = (x + width - px).min(dash);
-        fill_rect(pixels, buffer_width, buffer_height, px, y, segment, 1, color_argb);
+        fill_rect(
+            pixels,
+            buffer_width,
+            buffer_height,
+            px,
+            y,
+            segment,
+            1,
+            color_argb,
+        );
         fill_rect(
             pixels,
             buffer_width,
@@ -765,7 +788,16 @@ fn draw_dashed_rect(
     let mut py = y;
     while py < y + height {
         let segment = (y + height - py).min(dash);
-        fill_rect(pixels, buffer_width, buffer_height, x, py, 1, segment, color_argb);
+        fill_rect(
+            pixels,
+            buffer_width,
+            buffer_height,
+            x,
+            py,
+            1,
+            segment,
+            color_argb,
+        );
         fill_rect(
             pixels,
             buffer_width,

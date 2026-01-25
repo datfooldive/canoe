@@ -99,11 +99,7 @@ impl Rule {
 }
 
 /// Apply matching rules to a window
-pub fn apply_rules(
-    rules: &[Rule],
-    app_id: Option<&str>,
-    title: Option<&str>,
-) -> AppliedRules {
+pub fn apply_rules(rules: &[Rule], app_id: Option<&str>, title: Option<&str>) -> AppliedRules {
     let mut applied = AppliedRules::default();
 
     for rule in rules {

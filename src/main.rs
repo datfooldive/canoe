@@ -214,7 +214,8 @@ fn open_window_menu(
             | wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor::Left,
     );
     menu.layer_surface.set_margin(local_y, 0, 0, local_x);
-    menu.layer_surface.set_size(menu.width as u32, menu.height as u32);
+    menu.layer_surface
+        .set_size(menu.width as u32, menu.height as u32);
     menu.layer_surface.set_keyboard_interactivity(
         wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::KeyboardInteractivity::None,
     );
@@ -433,7 +434,8 @@ fn clear_titlebar_state(state: &mut AppState, window_id: rwm::WindowId) -> bool 
         return false;
     };
     let mut w = window.borrow_mut();
-    let changed = w.titlebar_hovered.is_some() || w.titlebar_pressed.is_some() || w.titlebar_left_down;
+    let changed =
+        w.titlebar_hovered.is_some() || w.titlebar_pressed.is_some() || w.titlebar_left_down;
     w.titlebar_hovered = None;
     w.titlebar_pressed = None;
     w.titlebar_left_down = false;
@@ -551,7 +553,8 @@ fn ensure_desktop_surface(
     layer_surface.set_size(0, 0);
     surface.commit();
 
-    output.borrow_mut().desktop_surface = Some(rwm::DesktopSurface::new(surface, layer_surface, output_id));
+    output.borrow_mut().desktop_surface =
+        Some(rwm::DesktopSurface::new(surface, layer_surface, output_id));
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
@@ -591,13 +594,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
                     let seat: wl_seat::WlSeat = registry.bind(name, version.min(7), qh, name);
                     state.globals.wl_seats.insert(name, seat);
 
-                    let seats: Vec<_> = state
-                        .context
-                        .borrow()
-                        .seats
-                        .values()
-                        .cloned()
-                        .collect();
+                    let seats: Vec<_> = state.context.borrow().seats.values().cloned().collect();
                     for seat_ref in seats {
                         if seat_ref.borrow().wl_seat_name == name {
                             attach_wl_seat(state, &seat_ref, qh);
@@ -606,8 +603,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
                     }
                 }
                 "river_window_manager_v1" => {
-                    let rwm: RiverWindowManagerV1 =
-                        registry.bind(name, version.min(2), qh, ());
+                    let rwm: RiverWindowManagerV1 = registry.bind(name, version.min(2), qh, ());
                     state.globals.rwm = Some(rwm.clone());
                     state.context.borrow_mut().rwm = Some(rwm);
                 }
@@ -645,13 +641,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
                     let manager: WpCursorShapeManagerV1 =
                         registry.bind(name, version.min(2), qh, ());
                     state.globals.cursor_shape_manager = Some(manager);
-                    let seats: Vec<_> = state
-                        .context
-                        .borrow()
-                        .seats
-                        .values()
-                        .cloned()
-                        .collect();
+                    let seats: Vec<_> = state.context.borrow().seats.values().cloned().collect();
                     for seat_ref in seats {
                         attach_cursor_shape_device(state, &seat_ref, qh);
                     }
@@ -784,7 +774,8 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                     let surface = compositor.create_surface(qh, TitlebarSurfaceData { window_id });
 
                     // Create decoration for titlebar (above window content)
-                    let decoration: RiverDecorationV1 = id.get_decoration_above(&surface, qh, window_id);
+                    let decoration: RiverDecorationV1 =
+                        id.get_decoration_above(&surface, qh, window_id);
 
                     // Create titlebar
                     let titlebar = rwm::Titlebar::new(surface, decoration);
@@ -792,7 +783,10 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
 
                     log::info!("Created titlebar for window {}", window_id);
                 } else {
-                    log::warn!("No compositor available, cannot create titlebar for window {}", window_id);
+                    log::warn!(
+                        "No compositor available, cannot create titlebar for window {}",
+                        window_id
+                    );
                 }
 
                 // Queue init event
@@ -814,17 +808,22 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
 
                 // Get layer shell seat if available
                 if let Some(ref layer_shell) = state.globals.rwm_layer_shell {
-                    let ls_seat: RiverLayerShellSeatV1 =
-                        layer_shell.get_seat(&id, qh, seat_id);
+                    let ls_seat: RiverLayerShellSeatV1 = layer_shell.get_seat(&id, qh, seat_id);
                     seat.borrow_mut().layer_shell_seat = Some(ls_seat);
                 }
 
                 // Register XKB bindings with the compositor
                 if let Some(ref xkb_bindings_global) = state.globals.rwm_xkb_bindings {
                     let mut seat_ref = seat.borrow_mut();
-                    log::info!("Registering {} XKB bindings for seat {}", seat_ref.xkb_bindings.len(), seat_id);
+                    log::info!(
+                        "Registering {} XKB bindings for seat {}",
+                        seat_ref.xkb_bindings.len(),
+                        seat_id
+                    );
 
-                    for (idx, (binding, rwm_binding_slot)) in seat_ref.xkb_bindings.iter_mut().enumerate() {
+                    for (idx, (binding, rwm_binding_slot)) in
+                        seat_ref.xkb_bindings.iter_mut().enumerate()
+                    {
                         // Protocol: get_xkb_binding(seat, keysym, modifiers) -> new_id
                         // wayland-client adds qh and user_data at the end
                         use river_window_management_v1::client::river_seat_v1::Modifiers;
@@ -840,7 +839,12 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                         // Enable binding if it's for the current mode
                         if binding.enabled {
                             rwm_binding.enable();
-                            log::debug!("Enabled binding {} (keysym: {:#x}, mods: {:#x})", idx, binding.keysym, binding.modifiers);
+                            log::debug!(
+                                "Enabled binding {} (keysym: {:#x}, mods: {:#x})",
+                                idx,
+                                binding.keysym,
+                                binding.modifiers
+                            );
                         }
 
                         *rwm_binding_slot = Some(rwm_binding);
@@ -852,9 +856,15 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                     let mut seat_ref = seat.borrow_mut();
                     let rwm_seat = seat_ref.rwm_seat.clone();
                     if let Some(rwm_seat) = rwm_seat {
-                        log::info!("Registering {} pointer bindings for seat {}", seat_ref.pointer_bindings.len(), seat_id);
+                        log::info!(
+                            "Registering {} pointer bindings for seat {}",
+                            seat_ref.pointer_bindings.len(),
+                            seat_id
+                        );
 
-                        for (idx, (binding, rwm_binding_slot)) in seat_ref.pointer_bindings.iter_mut().enumerate() {
+                        for (idx, (binding, rwm_binding_slot)) in
+                            seat_ref.pointer_bindings.iter_mut().enumerate()
+                        {
                             // Protocol: get_pointer_binding(button, modifiers) -> new_id on river_seat_v1
                             use river_window_management_v1::client::river_seat_v1::Modifiers;
                             let mods = Modifiers::from_bits_truncate(binding.modifiers);
@@ -928,7 +938,12 @@ impl Dispatch<RiverWindowV1, rwm::WindowId> for AppState {
         // Find window by matching the RiverWindowV1 object, not by user data
         let context = state.context.borrow();
         let found = context.windows.iter().find_map(|(&id, w)| {
-            if w.borrow().rwm_window.as_ref().map(|rw| rw == proxy).unwrap_or(false) {
+            if w.borrow()
+                .rwm_window
+                .as_ref()
+                .map(|rw| rw == proxy)
+                .unwrap_or(false)
+            {
                 Some((id, w.clone()))
             } else {
                 None
@@ -950,14 +965,25 @@ impl Dispatch<RiverWindowV1, rwm::WindowId> for AppState {
                 max_width,
                 max_height,
             } => {
-                log::info!("Window {} DimensionsHint: min={}x{}, max={}x{}",
-                    window_id, min_width, min_height, max_width, max_height);
+                log::info!(
+                    "Window {} DimensionsHint: min={}x{}, max={}x{}",
+                    window_id,
+                    min_width,
+                    min_height,
+                    max_width,
+                    max_height
+                );
                 let mut w = window.borrow_mut();
                 w.min_width = min_width;
                 w.min_height = min_height;
             }
             Event::Dimensions { width, height } => {
-                log::info!("Window {} received Dimensions event: {}x{}", window_id, width, height);
+                log::info!(
+                    "Window {} received Dimensions event: {}x{}",
+                    window_id,
+                    width,
+                    height
+                );
                 window.borrow_mut().update_dimensions(width, height);
             }
             Event::AppId { app_id } => {
@@ -978,24 +1004,36 @@ impl Dispatch<RiverWindowV1, rwm::WindowId> for AppState {
 
                 // Track terminal windows for swallowing
                 if w.is_terminal {
-                    state.context.borrow_mut().terminal_windows.insert(unreliable_pid, window_id);
+                    state
+                        .context
+                        .borrow_mut()
+                        .terminal_windows
+                        .insert(unreliable_pid, window_id);
                 }
             }
             Event::PointerMoveRequested { seat } => {
                 // Find the seat and queue move action
                 let context = state.context.borrow();
                 if let Some((seat_id, seat_rc)) = context.seats.iter().find(|(_, s)| {
-                    s.borrow().rwm_seat.as_ref().map(|rs| rs == &seat).unwrap_or(false)
+                    s.borrow()
+                        .rwm_seat
+                        .as_ref()
+                        .map(|rs| rs == &seat)
+                        .unwrap_or(false)
                 }) {
-                    window.borrow_mut().queue_event(
-                        rwm::WindowEvent::Move(Rc::downgrade(seat_rc))
-                    );
+                    window
+                        .borrow_mut()
+                        .queue_event(rwm::WindowEvent::Move(Rc::downgrade(seat_rc)));
                 }
             }
             Event::PointerResizeRequested { seat, edges } => {
                 let context = state.context.borrow();
                 if let Some((_, seat_rc)) = context.seats.iter().find(|(_, s)| {
-                    s.borrow().rwm_seat.as_ref().map(|rs| rs == &seat).unwrap_or(false)
+                    s.borrow()
+                        .rwm_seat
+                        .as_ref()
+                        .map(|rs| rs == &seat)
+                        .unwrap_or(false)
                 }) {
                     // Convert WEnum<Edges> to u32
                     let edges_u32 = if let wayland_client::WEnum::Value(e) = edges {
@@ -1003,34 +1041,44 @@ impl Dispatch<RiverWindowV1, rwm::WindowId> for AppState {
                     } else {
                         0
                     };
-                    window.borrow_mut().queue_event(
-                        rwm::WindowEvent::Resize(Rc::downgrade(seat_rc), edges_u32)
-                    );
+                    window
+                        .borrow_mut()
+                        .queue_event(rwm::WindowEvent::Resize(Rc::downgrade(seat_rc), edges_u32));
                 }
             }
             Event::FullscreenRequested { output } => {
                 let output_weak = output.and_then(|o| {
                     let context = state.context.borrow();
                     context.outputs.iter().find_map(|(_, out)| {
-                        if out.borrow().rwm_output.as_ref().map(|ro| ro == &o).unwrap_or(false) {
+                        if out
+                            .borrow()
+                            .rwm_output
+                            .as_ref()
+                            .map(|ro| ro == &o)
+                            .unwrap_or(false)
+                        {
                             Some(Rc::downgrade(out))
                         } else {
                             None
                         }
                     })
                 });
-                window.borrow_mut().queue_event(
-                    rwm::WindowEvent::Fullscreen(output_weak)
-                );
+                window
+                    .borrow_mut()
+                    .queue_event(rwm::WindowEvent::Fullscreen(output_weak));
             }
             Event::ExitFullscreenRequested => {
-                window.borrow_mut().queue_event(rwm::WindowEvent::Unfullscreen);
+                window
+                    .borrow_mut()
+                    .queue_event(rwm::WindowEvent::Unfullscreen);
             }
             Event::MaximizeRequested => {
                 window.borrow_mut().queue_event(rwm::WindowEvent::Maximize);
             }
             Event::UnmaximizeRequested => {
-                window.borrow_mut().queue_event(rwm::WindowEvent::Unmaximize);
+                window
+                    .borrow_mut()
+                    .queue_event(rwm::WindowEvent::Unmaximize);
             }
             Event::MinimizeRequested => {
                 window.borrow_mut().queue_event(rwm::WindowEvent::Minimize);
@@ -1132,7 +1180,12 @@ impl Dispatch<RiverSeatV1, rwm::SeatId> for AppState {
                 // Find the window
                 let context = state.context.borrow();
                 let found = context.windows.iter().find_map(|(id, w)| {
-                    if w.borrow().rwm_window.as_ref().map(|rw| rw == &window).unwrap_or(false) {
+                    if w.borrow()
+                        .rwm_window
+                        .as_ref()
+                        .map(|rw| rw == &window)
+                        .unwrap_or(false)
+                    {
                         Some((*id, Rc::downgrade(w)))
                     } else {
                         None
@@ -1159,7 +1212,11 @@ impl Dispatch<RiverSeatV1, rwm::SeatId> for AppState {
                 // Always focus the window on click/interaction
                 let context = state.context.borrow();
                 if let Some((&wid, _)) = context.windows.iter().find(|(_, w)| {
-                    w.borrow().rwm_window.as_ref().map(|rw| rw == &window).unwrap_or(false)
+                    w.borrow()
+                        .rwm_window
+                        .as_ref()
+                        .map(|rw| rw == &window)
+                        .unwrap_or(false)
                 }) {
                     drop(context);
                     state.context.borrow_mut().close_window_menu();
@@ -1194,15 +1251,19 @@ impl Dispatch<RiverSeatV1, rwm::SeatId> for AppState {
                 seat.borrow_mut().update_pointer_position(x, y);
                 state.context.borrow_mut().update_cursor_for_seat(*seat_id);
                 update_menu_hover_from_global(state, *seat_id, qh);
-                let titlebar_window = state.context.borrow().windows.iter().find_map(
-                    |(&window_id, window)| {
-                        if window.borrow().titlebar_left_down {
-                            Some(window_id)
-                        } else {
-                            None
-                        }
-                    },
-                );
+                let titlebar_window =
+                    state
+                        .context
+                        .borrow()
+                        .windows
+                        .iter()
+                        .find_map(|(&window_id, window)| {
+                            if window.borrow().titlebar_left_down {
+                                Some(window_id)
+                            } else {
+                                None
+                            }
+                        });
                 if let Some(window_id) = titlebar_window {
                     if update_titlebar_hover_from_global(state, window_id, x, y) {
                         request_manage_dirty(state);
@@ -1227,7 +1288,11 @@ impl Dispatch<ZwlrLayerSurfaceV1, rwm::LayerSurfaceKind> for AppState {
         use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Event;
 
         match event {
-            Event::Configure { serial, width, height } => {
+            Event::Configure {
+                serial,
+                width,
+                height,
+            } => {
                 proxy.ack_configure(serial);
                 match kind {
                     rwm::LayerSurfaceKind::Desktop(output_id) => {
@@ -1246,9 +1311,10 @@ impl Dispatch<ZwlrLayerSurfaceV1, rwm::LayerSurfaceKind> for AppState {
                             desktop.reset_buffer();
                         }
                         desktop.configure(width as i32, height as i32);
-                        if let (Some(shm), Some(compositor)) =
-                            (state.globals.shm.as_ref(), state.globals.compositor.as_ref())
-                        {
+                        if let (Some(shm), Some(compositor)) = (
+                            state.globals.shm.as_ref(),
+                            state.globals.compositor.as_ref(),
+                        ) {
                             desktop.ensure_buffer(shm, qh);
                             let bg_color = state.context.borrow().config.ui.desktop_background;
                             desktop.render(bg_color);
@@ -1261,7 +1327,10 @@ impl Dispatch<ZwlrLayerSurfaceV1, rwm::LayerSurfaceKind> for AppState {
                         let Some(menu) = context.window_menu.as_mut() else {
                             return;
                         };
-                        if width > 0 && height > 0 && (menu.width, menu.height) != (width as i32, height as i32) {
+                        if width > 0
+                            && height > 0
+                            && (menu.width, menu.height) != (width as i32, height as i32)
+                        {
                             menu.reset_buffer();
                             menu.width = width as i32;
                             menu.height = height as i32;
@@ -1287,9 +1356,10 @@ impl Dispatch<ZwlrLayerSurfaceV1, rwm::LayerSurfaceKind> for AppState {
                             shield.height = height as i32;
                         }
                         shield.configured = true;
-                        if let (Some(shm), Some(compositor)) =
-                            (state.globals.shm.as_ref(), state.globals.compositor.as_ref())
-                        {
+                        if let (Some(shm), Some(compositor)) = (
+                            state.globals.shm.as_ref(),
+                            state.globals.compositor.as_ref(),
+                        ) {
                             shield.ensure_buffer(shm, qh);
                             shield.render();
                             shield.update_input_region(compositor, qh);
@@ -1298,25 +1368,23 @@ impl Dispatch<ZwlrLayerSurfaceV1, rwm::LayerSurfaceKind> for AppState {
                     }
                 }
             }
-            Event::Closed => {
-                match kind {
-                    rwm::LayerSurfaceKind::Desktop(output_id) => {
-                        if let Some(output) = state.context.borrow().outputs.get(output_id) {
-                            output.borrow_mut().desktop_surface = None;
-                        }
+            Event::Closed => match kind {
+                rwm::LayerSurfaceKind::Desktop(output_id) => {
+                    if let Some(output) = state.context.borrow().outputs.get(output_id) {
+                        output.borrow_mut().desktop_surface = None;
                     }
-                    rwm::LayerSurfaceKind::Menu => {
-                        state.context.borrow_mut().close_window_menu();
-                    }
-                    rwm::LayerSurfaceKind::MenuShield(output_id) => {
-                        if let Some(shield) = state.context.borrow().window_menu_shield.as_ref() {
-                            if shield.output_id == *output_id {
-                                state.context.borrow_mut().window_menu_shield = None;
-                            }
+                }
+                rwm::LayerSurfaceKind::Menu => {
+                    state.context.borrow_mut().close_window_menu();
+                }
+                rwm::LayerSurfaceKind::MenuShield(output_id) => {
+                    if let Some(shield) = state.context.borrow().window_menu_shield.as_ref() {
+                        if shield.output_id == *output_id {
+                            state.context.borrow_mut().window_menu_shield = None;
                         }
                     }
                 }
-            }
+            },
             _ => {}
         }
     }
@@ -1347,9 +1415,17 @@ impl Dispatch<RiverLayerShellOutputV1, rwm::OutputId> for AppState {
     ) {
         use river_layer_shell_v1::client::river_layer_shell_output_v1::Event;
 
-        if let Event::NonExclusiveArea { x, y, width, height } = event {
+        if let Event::NonExclusiveArea {
+            x,
+            y,
+            width,
+            height,
+        } = event
+        {
             if let Some(output) = state.context.borrow().outputs.get(output_id) {
-                output.borrow_mut().update_exclusive_area(x, y, width, height);
+                output
+                    .borrow_mut()
+                    .update_exclusive_area(x, y, width, height);
             }
         }
     }
@@ -1405,7 +1481,12 @@ impl Dispatch<RiverXkbBindingV1, (rwm::SeatId, usize)> for AppState {
     ) {
         use river_xkb_bindings_v1::client::river_xkb_binding_v1::Event;
 
-        log::debug!("XKB binding event: seat={}, binding_idx={}, event={:?}", seat_id, binding_idx, event);
+        log::debug!(
+            "XKB binding event: seat={}, binding_idx={}, event={:?}",
+            seat_id,
+            binding_idx,
+            event
+        );
 
         let seat = match state.context.borrow().seats.get(seat_id) {
             Some(seat) => seat.clone(),
@@ -1441,19 +1522,19 @@ impl Dispatch<RiverXkbBindingV1, (rwm::SeatId, usize)> for AppState {
                     }
                 }
             }
-                    Event::Released => {
-                        if !enabled || binding_event != binding::BindingEvent::Released {
-                            return;
-                        }
-                        match action {
-                            binding::Action::WindowMenuCommit => {
-                                handle_window_menu_commit(state, *seat_id);
-                            }
-                            _ => {
-                                seat.borrow_mut().queue_action(action);
-                            }
-                        }
+            Event::Released => {
+                if !enabled || binding_event != binding::BindingEvent::Released {
+                    return;
+                }
+                match action {
+                    binding::Action::WindowMenuCommit => {
+                        handle_window_menu_commit(state, *seat_id);
                     }
+                    _ => {
+                        seat.borrow_mut().queue_action(action);
+                    }
+                }
+            }
         }
     }
 }
@@ -1689,10 +1770,8 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                         if let Some(menu) = context.window_menu.as_mut() {
                             if menu.surface == surface {
                                 target = rwm::PointerTarget::Menu;
-                                let changed = context.update_menu_hover(
-                                    surface_pos.0,
-                                    surface_pos.1,
-                                );
+                                let changed =
+                                    context.update_menu_hover(surface_pos.0, surface_pos.1);
                                 if changed {
                                     drop(context);
                                     render_window_menu(state, _qh);
@@ -1742,10 +1821,7 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                     }
                     if let Some(window_id) = titlebar_window {
                         let changed = update_titlebar_hover_from_surface(
-                            state,
-                            window_id,
-                            surface_x,
-                            surface_y,
+                            state, window_id, surface_x, surface_y,
                         );
                         if changed {
                             request_manage_dirty(state);
@@ -1764,7 +1840,11 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                     seat.pointer_target = rwm::PointerTarget::None;
                     seat.cursor_shape = None;
                 }
-                wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
+                wl_pointer::Event::Motion {
+                    surface_x,
+                    surface_y,
+                    ..
+                } => {
                     {
                         let mut seat_ref = seat.borrow_mut();
                         seat_ref.last_surface_x = surface_x.round() as i32;
@@ -1785,17 +1865,18 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                         update_menu_hover_from_surface(state, output_id, surface_x, surface_y, _qh);
                     } else if let rwm::PointerTarget::Titlebar(window_id) = target {
                         let changed = update_titlebar_hover_from_surface(
-                            state,
-                            window_id,
-                            surface_x,
-                            surface_y,
+                            state, window_id, surface_x, surface_y,
                         );
                         if changed {
                             request_manage_dirty(state);
                         }
                     }
                 }
-                wl_pointer::Event::Button { button, state: btn_state, .. } => {
+                wl_pointer::Event::Button {
+                    button,
+                    state: btn_state,
+                    ..
+                } => {
                     let target = seat.borrow().pointer_target;
                     if matches!(target, rwm::PointerTarget::MenuShield(_)) {
                         return;
@@ -1846,10 +1927,7 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                                             (seat_ref.last_surface_x, seat_ref.last_surface_y)
                                         };
                                         update_titlebar_hover_from_surface(
-                                            state,
-                                            window_id,
-                                            px as f64,
-                                            py as f64,
+                                            state, window_id, px as f64, py as f64,
                                         );
                                         let should_render = {
                                             let mut context = state.context.borrow_mut();
@@ -1878,10 +1956,7 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                                         (seat_ref.last_surface_x, seat_ref.last_surface_y)
                                     };
                                     update_titlebar_hover_from_surface(
-                                        state,
-                                        window_id,
-                                        px as f64,
-                                        py as f64,
+                                        state, window_id, px as f64, py as f64,
                                     );
                                     let (action, should_render) = {
                                         let mut context = state.context.borrow_mut();
@@ -1923,7 +1998,8 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                                                 if let Some(window) =
                                                     state.context.borrow().windows.get(&window_id)
                                                 {
-                                                    window.borrow_mut()
+                                                    window
+                                                        .borrow_mut()
                                                         .queue_event(rwm::WindowEvent::Close);
                                                     request_manage_dirty(state);
                                                 }
@@ -1934,7 +2010,8 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                                             if let Some(window) =
                                                 state.context.borrow().windows.get(&window_id)
                                             {
-                                                window.borrow_mut()
+                                                window
+                                                    .borrow_mut()
                                                     .queue_event(rwm::WindowEvent::Minimize);
                                                 request_manage_dirty(state);
                                             }
@@ -1945,10 +2022,12 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                                                 state.context.borrow().windows.get(&window_id)
                                             {
                                                 if window.borrow().maximized {
-                                                    window.borrow_mut()
+                                                    window
+                                                        .borrow_mut()
                                                         .queue_event(rwm::WindowEvent::Unmaximize);
                                                 } else {
-                                                    window.borrow_mut()
+                                                    window
+                                                        .borrow_mut()
                                                         .queue_event(rwm::WindowEvent::Maximize);
                                                 }
                                                 request_manage_dirty(state);
@@ -1972,7 +2051,9 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                                         .as_ref()
                                         .and_then(|menu| menu.hovered)
                                         .is_some();
-                                    if context.window_menu_mode == Some(rwm::WindowMenuMode::Pointer) {
+                                    if context.window_menu_mode
+                                        == Some(rwm::WindowMenuMode::Pointer)
+                                    {
                                         if hovered {
                                             (true, false)
                                         } else {
@@ -2072,11 +2153,13 @@ impl Dispatch<wl_output::WlOutput, ()> for AppState {
         match _event {
             wl_output::Event::Scale { factor } => {
                 let scale = factor.max(1);
-                let output_name = _state
-                    .globals
-                    .wl_outputs
-                    .iter()
-                    .find_map(|(name, output)| if output == _proxy { Some(*name) } else { None });
+                let output_name = _state.globals.wl_outputs.iter().find_map(|(name, output)| {
+                    if output == _proxy {
+                        Some(*name)
+                    } else {
+                        None
+                    }
+                });
                 if let Some(name) = output_name {
                     _state.globals.wl_output_scales.insert(name, scale);
                 }
@@ -2090,10 +2173,7 @@ impl Dispatch<wl_output::WlOutput, ()> for AppState {
                             if let Some(name) = output_name {
                                 out.wl_output_name == name
                             } else {
-                                out.wl_output
-                                    .as_ref()
-                                    .map(|o| o == _proxy)
-                                    .unwrap_or(false)
+                                out.wl_output.as_ref().map(|o| o == _proxy).unwrap_or(false)
                             }
                         })
                         .cloned()
@@ -2193,7 +2273,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Handle Wayland events
-        if poll_fds[0].revents().map(|r| r.contains(PollFlags::POLLIN)).unwrap_or(false) {
+        if poll_fds[0]
+            .revents()
+            .map(|r| r.contains(PollFlags::POLLIN))
+            .unwrap_or(false)
+        {
             event_queue.dispatch_pending(&mut state)?;
 
             // Read and dispatch new events
@@ -2209,7 +2293,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Handle signals
-        if poll_fds[1].revents().map(|r| r.contains(PollFlags::POLLIN)).unwrap_or(false) {
+        if poll_fds[1]
+            .revents()
+            .map(|r| r.contains(PollFlags::POLLIN))
+            .unwrap_or(false)
+        {
             if let Ok(Some(sig_info)) = signal_fd.read_signal() {
                 match Signal::try_from(sig_info.ssi_signo as i32) {
                     Ok(Signal::SIGINT) | Ok(Signal::SIGTERM) | Ok(Signal::SIGQUIT) => {

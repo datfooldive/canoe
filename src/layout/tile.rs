@@ -121,7 +121,10 @@ impl Layout for TileLayout {
             };
 
         // Arrange master windows
-        let is_horizontal_master = matches!(master_location, MasterLocation::Left | MasterLocation::Right);
+        let is_horizontal_master = matches!(
+            master_location,
+            MasterLocation::Left | MasterLocation::Right
+        );
         for (i, window) in windows.iter().take(master_count).enumerate() {
             let (x, y, w, h) = if is_horizontal_master {
                 // Stack master windows vertically

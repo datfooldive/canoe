@@ -1,9 +1,9 @@
 //! Window management
 
+use super::titlebar::TitlebarButton;
 use crate::config::WindowDecoration;
 use crate::protocol::river_window_management_v1::client::river_window_v1::Edges;
 use crate::protocol::{RiverNodeV1, RiverOutputV1, RiverWindowV1};
-use super::titlebar::TitlebarButton;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Weak;
@@ -307,8 +307,15 @@ impl Window {
     /// Set window borders
     pub fn set_borders(&self, edges: Edges, width: i32, r: u32, g: u32, b: u32, a: u32) {
         if let Some(ref rwm_window) = self.rwm_window {
-            log::debug!("set_borders: edges={:?} width={} rgba=({},{},{},{})",
-                edges, width, r, g, b, a);
+            log::debug!(
+                "set_borders: edges={:?} width={} rgba=({},{},{},{})",
+                edges,
+                width,
+                r,
+                g,
+                b,
+                a
+            );
             rwm_window.set_borders(edges, width, r, g, b, a);
         }
     }
@@ -472,7 +479,9 @@ impl Window {
     /// Apply operation delta
     pub fn apply_op_delta(&mut self, dx: i32, dy: i32) {
         match &self.operator {
-            Operator::Move { start_x, start_y, .. } => {
+            Operator::Move {
+                start_x, start_y, ..
+            } => {
                 self.set_position(*start_x + dx, *start_y + dy);
             }
             Operator::Resize {

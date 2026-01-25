@@ -66,8 +66,8 @@ pub struct BorderColor {
 impl Default for BorderColor {
     fn default() -> Self {
         Self {
-            focus: 0xffff00ff,    // Bright yellow, fully opaque
-            unfocus: 0x888800ff,  // Dark yellow/olive for unfocused
+            focus: 0xffff00ff,   // Bright yellow, fully opaque
+            unfocus: 0x888800ff, // Dark yellow/olive for unfocused
             urgent: 0xff0000ff,
         }
     }
@@ -310,7 +310,7 @@ impl Default for MutableConfig {
             grid: GridConfig::default(),
             monocle: MonocleConfig::default(),
             scroller: ScrollerConfig::default(),
-            border_width: 5,  // 5px layered border
+            border_width: 5, // 5px layered border
             auto_swallow: true,
         }
     }

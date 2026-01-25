@@ -17,10 +17,7 @@ impl Layout for MonocleLayout {
         }
 
         // Find focused window, or use first window
-        let focused_window = windows
-            .iter()
-            .find(|w| w.focused)
-            .unwrap_or(&windows[0]);
+        let focused_window = windows.iter().find(|w| w.focused).unwrap_or(&windows[0]);
 
         let x = area.x + gap;
         let y = area.y + gap;

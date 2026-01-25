@@ -151,17 +151,63 @@ pub fn default_xkb_bindings() -> Vec<(Mode, u32, u32, Action, super::BindingEven
 
     vec![
         // Essential window management
-        (Mode::Default, Keysym::q.raw(), alt | shift, Action::Quit, super::BindingEvent::Pressed),
-        (Mode::Default, Keysym::c.raw(), alt | shift, Action::Close, super::BindingEvent::Pressed),
-        (Mode::Default, Keysym::Down.raw(), alt, Action::HideFocused, super::BindingEvent::Pressed),
-        (Mode::Default, Keysym::Up.raw(), alt, Action::MaximizeFocused, super::BindingEvent::Pressed),
-
+        (
+            Mode::Default,
+            Keysym::q.raw(),
+            alt | shift,
+            Action::Quit,
+            super::BindingEvent::Pressed,
+        ),
+        (
+            Mode::Default,
+            Keysym::c.raw(),
+            alt | shift,
+            Action::Close,
+            super::BindingEvent::Pressed,
+        ),
+        (
+            Mode::Default,
+            Keysym::Down.raw(),
+            alt,
+            Action::HideFocused,
+            super::BindingEvent::Pressed,
+        ),
+        (
+            Mode::Default,
+            Keysym::Up.raw(),
+            alt,
+            Action::MaximizeFocused,
+            super::BindingEvent::Pressed,
+        ),
         // Focus navigation (cycle through windows)
-        (Mode::Default, Keysym::Tab.raw(), alt, Action::WindowMenuCycle, super::BindingEvent::Pressed),
-        (Mode::Default, Keysym::Tab.raw(), alt | shift, Action::WindowMenuCycle, super::BindingEvent::Pressed),
-        (Mode::Default, Keysym::Alt_L.raw(), 0, Action::WindowMenuCommit, super::BindingEvent::Released),
-        (Mode::Default, Keysym::Alt_R.raw(), 0, Action::WindowMenuCommit, super::BindingEvent::Released),
-
+        (
+            Mode::Default,
+            Keysym::Tab.raw(),
+            alt,
+            Action::WindowMenuCycle,
+            super::BindingEvent::Pressed,
+        ),
+        (
+            Mode::Default,
+            Keysym::Tab.raw(),
+            alt | shift,
+            Action::WindowMenuCycle,
+            super::BindingEvent::Pressed,
+        ),
+        (
+            Mode::Default,
+            Keysym::Alt_L.raw(),
+            0,
+            Action::WindowMenuCommit,
+            super::BindingEvent::Released,
+        ),
+        (
+            Mode::Default,
+            Keysym::Alt_R.raw(),
+            0,
+            Action::WindowMenuCommit,
+            super::BindingEvent::Released,
+        ),
         // Fullscreen toggle
         (
             Mode::Default,
@@ -170,7 +216,6 @@ pub fn default_xkb_bindings() -> Vec<(Mode, u32, u32, Action, super::BindingEven
             Action::ToggleFullscreen { in_window: false },
             super::BindingEvent::Pressed,
         ),
-
         // Spawn terminal
         (
             Mode::Default,
@@ -181,7 +226,6 @@ pub fn default_xkb_bindings() -> Vec<(Mode, u32, u32, Action, super::BindingEven
             },
             super::BindingEvent::Pressed,
         ),
-
         // Spawn launcher
         (
             Mode::Default,
