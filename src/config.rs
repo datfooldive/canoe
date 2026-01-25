@@ -36,17 +36,6 @@ pub enum Mode {
     Passthrough,
 }
 
-impl Mode {
-    pub fn tag(&self) -> &'static str {
-        match self {
-            Mode::Lock => "",
-            Mode::Default => "",
-            Mode::Floating => "F",
-            Mode::Passthrough => "P",
-        }
-    }
-}
-
 /// Window decoration style
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WindowDecoration {
@@ -87,65 +76,6 @@ impl Default for BorderLayers {
             outer: 0x000000FF,
             mid: 0xC0C0C0FF,
             inner: 0x000000FF,
-        }
-    }
-}
-
-/// Bar position
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BarPosition {
-    #[default]
-    Top,
-    Bottom,
-}
-
-/// Bar color configuration
-#[derive(Debug, Clone, Copy)]
-pub struct BarColor {
-    pub fg: u32,
-    pub bg: u32,
-}
-
-/// Status source for bar
-#[derive(Debug, Clone)]
-pub enum StatusSource {
-    Text(String),
-    Stdin,
-    Fifo(String),
-}
-
-impl Default for StatusSource {
-    fn default() -> Self {
-        Self::Text("rwm".to_string())
-    }
-}
-
-/// Bar configuration
-#[derive(Debug, Clone)]
-pub struct BarConfig {
-    pub show_default: bool,
-    pub position: BarPosition,
-    pub font: String,
-    pub color_normal: BarColor,
-    pub color_select: BarColor,
-    pub status: StatusSource,
-}
-
-impl Default for BarConfig {
-    fn default() -> Self {
-        Self {
-            show_default: true,
-            position: BarPosition::Top,
-            font: "monospace:size=10".to_string(),
-            color_normal: BarColor {
-                fg: 0x828bb8ff,
-                bg: 0x1b1d2bd0,
-            },
-            color_select: BarColor {
-                fg: 0x444a73ff,
-                bg: 0xc8d3f5d0,
-            },
-            status: StatusSource::default(),
         }
     }
 }
@@ -216,7 +146,6 @@ pub struct Config {
     pub scroll_factor: f64,
     pub sloppy_focus: bool,
 
-    pub bar: BarConfig,
     pub default_window_decoration: WindowDecoration,
     pub border_color: BorderColor,
     pub ui: UiConfig,
@@ -237,7 +166,6 @@ impl Default for Config {
             scroll_factor: 1.0,
             sloppy_focus: false,
 
-            bar: BarConfig::default(),
             default_window_decoration: WindowDecoration::Ssd,
             border_color: BorderColor::default(),
             ui: UiConfig::default(),
@@ -424,11 +352,6 @@ fn default_rules() -> Vec<Rule> {
         },
         Rule {
             app_id: Some("chromium".to_string()),
-            ..Default::default()
-        },
-        Rule {
-            app_id: Some("foot".to_string()),
-            is_terminal: Some(true),
             ..Default::default()
         },
     ]

@@ -11,31 +11,9 @@ pub enum Direction {
     Reverse,
 }
 
-/// Edge for snapping
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Edge {
-    Left,
-    Right,
-    Top,
-    Bottom,
-}
-
-/// Step for movement/resize
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Step {
-    pub horizontal: i32,
-    pub vertical: i32,
-}
-
 /// Window manager state for custom actions
 #[derive(Debug, Clone)]
 pub struct State {}
-
-impl State {
-    pub fn refresh_current_bar(&self) {
-        // Will be implemented with bar support
-    }
-}
 
 /// Argument types for custom functions
 #[derive(Debug, Clone)]
@@ -74,35 +52,16 @@ pub enum Action {
 
     /// Send focused window to another output
     SendToOutput { direction: Direction },
-    /// Swap focused window with another
-    Swap { direction: Direction },
-
-    /// Move floating window
-    Move { step: Step },
-    /// Resize window
-    Resize { step: Step },
     /// Start pointer move operation
     PointerMove,
     /// Start pointer resize operation
     PointerResize,
-
-    /// Snap window to edge
-    Snap { edge: Edge },
 
     /// Switch input mode
     SwitchMode { mode: Mode },
 
     /// Toggle fullscreen
     ToggleFullscreen { in_window: bool },
-    /// Toggle floating
-    ToggleFloating,
-    /// Toggle swallow for focused window
-    ToggleSwallow,
-    /// Toggle bar visibility
-    ToggleBar,
-
-    /// Zoom (swap with master)
-    Zoom,
 
     /// Hide (minimize) the focused window
     HideFocused,

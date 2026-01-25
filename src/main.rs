@@ -999,15 +999,6 @@ impl Dispatch<RiverWindowV1, rwm::WindowId> for AppState {
             Event::UnreliablePid { unreliable_pid } => {
                 let mut w = window.borrow_mut();
                 w.pid = unreliable_pid;
-
-                // Track terminal windows for swallowing
-                if w.is_terminal {
-                    state
-                        .context
-                        .borrow_mut()
-                        .terminal_windows
-                        .insert(unreliable_pid, window_id);
-                }
             }
             Event::PointerMoveRequested { seat } => {
                 // Find the seat and queue move action

@@ -1,6 +1,6 @@
 //! Core context - central state management
 
-use crate::binding::{Action, Direction, Edge, PointerBinding, XkbBinding};
+use crate::binding::{Action, Direction, PointerBinding, XkbBinding};
 use crate::config::{load_config, Config};
 use crate::protocol::river_window_management_v1::client::river_window_v1::Edges;
 use crate::protocol::*;
@@ -52,9 +52,6 @@ pub struct Context {
     pub session_locked: bool,
     startup_unminimize_done: bool,
 
-    // Terminal windows for swallowing
-    pub terminal_windows: HashMap<i32, WindowId>, // pid -> window_id
-
     /// Window menu surface and state
     pub window_menu: Option<WindowMenu>,
     pub window_menu_mode: Option<WindowMenuMode>,
@@ -91,7 +88,6 @@ impl Context {
             session_locked: false,
             startup_unminimize_done: false,
 
-            terminal_windows: HashMap::new(),
             window_menu: None,
             window_menu_mode: None,
             window_menu_shield: None,
@@ -135,9 +131,6 @@ impl Context {
         if self.focused_window == Some(window_id) {
             self.focused_window = self.focus_stack.first().copied();
         }
-
-        // Remove from terminal windows
-        self.terminal_windows.retain(|_, &mut wid| wid != window_id);
 
         self.windows.remove(&window_id);
     }
@@ -235,12 +228,6 @@ impl Context {
         }
         if let Some(decoration) = applied.decoration {
             window.decoration = Some(decoration);
-        }
-        if let Some(is_terminal) = applied.is_terminal {
-            window.is_terminal = is_terminal;
-        }
-        if let Some(disable_swallow) = applied.disable_swallow {
-            window.disable_swallow = disable_swallow;
         }
     }
 
@@ -340,23 +327,11 @@ impl Context {
             Action::SendToOutput { direction } => {
                 self.send_to_output(direction);
             }
-            Action::Swap { direction } => {
-                self.swap_windows(direction);
-            }
-            Action::Move { step } => {
-                self.move_focused_window(step.horizontal, step.vertical);
-            }
-            Action::Resize { step } => {
-                self.resize_focused_window(step.horizontal, step.vertical);
-            }
             Action::PointerMove => {
                 self.start_pointer_move(seat_id);
             }
             Action::PointerResize => {
                 self.start_pointer_resize(seat_id);
-            }
-            Action::Snap { edge } => {
-                self.snap_focused_window(edge);
             }
             Action::SwitchMode { mode } => {
                 if let Some(seat) = self.seats.get(&seat_id) {
@@ -365,18 +340,6 @@ impl Context {
             }
             Action::ToggleFullscreen { in_window } => {
                 self.toggle_fullscreen(in_window);
-            }
-            Action::ToggleFloating => {
-                self.toggle_floating();
-            }
-            Action::ToggleSwallow => {
-                self.toggle_swallow();
-            }
-            Action::ToggleBar => {
-                // Bar support would go here
-            }
-            Action::Zoom => {
-                self.zoom();
             }
             Action::HideFocused => {
                 if let Some(window_id) = self.focused_window {
@@ -565,106 +528,6 @@ impl Context {
         self.arrange_output(target_output_id);
     }
 
-    /// Swap focused window with next/previous
-    fn swap_windows(&mut self, direction: Direction) {
-        let current_output = match self.current_output.and_then(|id| self.outputs.get(&id)) {
-            Some(o) => o.clone(),
-            None => return,
-        };
-
-        let focused_id = match self.focused_window {
-            Some(id) => id,
-            None => return,
-        };
-
-        // Get tiled windows on current output
-        let output_ref = current_output.borrow();
-        let mut tiled: Vec<WindowId> = self
-            .windows
-            .iter()
-            .filter(|(_, w)| {
-                let w = w.borrow();
-                w.is_visible_on(&output_ref) && w.is_tiled()
-            })
-            .map(|(&id, _)| id)
-            .collect();
-        drop(output_ref);
-
-        if tiled.len() <= 1 {
-            return;
-        }
-
-        // Sort by position in focus stack
-        tiled.sort_by_key(|id| {
-            self.focus_stack
-                .iter()
-                .position(|&fid| fid == *id)
-                .unwrap_or(usize::MAX)
-        });
-
-        let focused_idx = match tiled.iter().position(|&id| id == focused_id) {
-            Some(idx) => idx,
-            None => return,
-        };
-
-        let swap_idx = match direction {
-            Direction::Forward => (focused_idx + 1) % tiled.len(),
-            Direction::Reverse => {
-                if focused_idx == 0 {
-                    tiled.len() - 1
-                } else {
-                    focused_idx - 1
-                }
-            }
-        };
-
-        // Swap in focus stack
-        let focused_pos = self.focus_stack.iter().position(|&id| id == focused_id);
-        let swap_pos = self
-            .focus_stack
-            .iter()
-            .position(|&id| id == tiled[swap_idx]);
-
-        if let (Some(fp), Some(sp)) = (focused_pos, swap_pos) {
-            self.focus_stack.swap(fp, sp);
-        }
-
-        // Rearrange
-        if let Some(output_id) = self.current_output {
-            self.arrange_output(output_id);
-        }
-    }
-
-    /// Move focused floating window
-    fn move_focused_window(&mut self, dx: i32, dy: i32) {
-        if let Some(window_id) = self.focused_window {
-            if let Some(window) = self.windows.get(&window_id) {
-                let mut w = window.borrow_mut();
-                if w.floating {
-                    w.unmaximize_restore_size_only();
-                    let new_x = w.x + dx;
-                    let new_y = w.y + dy;
-                    w.set_position(new_x, new_y);
-                }
-            }
-        }
-    }
-
-    /// Resize focused window
-    fn resize_focused_window(&mut self, dw: i32, dh: i32) {
-        if let Some(window_id) = self.focused_window {
-            if let Some(window) = self.windows.get(&window_id) {
-                let mut w = window.borrow_mut();
-                if w.floating {
-                    w.clear_maximized_without_restore();
-                    let new_width = (w.width + dw).max(w.min_width);
-                    let new_height = (w.height + dh).max(w.min_height);
-                    w.propose_dimensions(new_width, new_height);
-                }
-            }
-        }
-    }
-
     /// Start pointer move operation
     fn start_pointer_move(&mut self, seat_id: SeatId) {
         // First, focus the window under the pointer
@@ -818,30 +681,6 @@ impl Context {
             w.floating = true;
             w.start_move(Rc::downgrade(&seat));
             seat.borrow().start_pointer_op();
-        }
-    }
-
-    /// Snap focused window to edge
-    fn snap_focused_window(&mut self, edge: Edge) {
-        let (output_x, output_y, output_w, output_h) =
-            match self.current_output.and_then(|id| self.outputs.get(&id)) {
-                Some(o) => o.borrow().usable_area(),
-                None => return,
-            };
-
-        if let Some(window_id) = self.focused_window {
-            if let Some(window) = self.windows.get(&window_id) {
-                let mut w = window.borrow_mut();
-                if w.floating {
-                    let (new_x, new_y) = match edge {
-                        Edge::Left => (output_x, w.y),
-                        Edge::Right => (output_x + output_w - w.width, w.y),
-                        Edge::Top => (w.x, output_y),
-                        Edge::Bottom => (w.x, output_y + output_h - w.height),
-                    };
-                    w.set_position(new_x, new_y);
-                }
-            }
         }
     }
 
@@ -1020,46 +859,6 @@ impl Context {
                 }
             }
         }
-
-        if let Some(output_id) = self.current_output {
-            self.arrange_output(output_id);
-        }
-    }
-
-    /// Toggle floating for focused window
-    fn toggle_floating(&mut self) {
-        if let Some(window_id) = self.focused_window {
-            if let Some(window) = self.windows.get(&window_id) {
-                let mut w = window.borrow_mut();
-                w.floating = !w.floating;
-            }
-        }
-
-        if let Some(output_id) = self.current_output {
-            self.arrange_output(output_id);
-        }
-    }
-
-    /// Toggle swallow for focused window
-    fn toggle_swallow(&mut self) {
-        if let Some(window_id) = self.focused_window {
-            if let Some(window) = self.windows.get(&window_id) {
-                let mut w = window.borrow_mut();
-                w.disable_swallow = !w.disable_swallow;
-            }
-        }
-    }
-
-    /// Zoom (swap with master)
-    fn zoom(&mut self) {
-        let focused_id = match self.focused_window {
-            Some(id) => id,
-            None => return,
-        };
-
-        // Move focused window to front of focus stack
-        self.focus_stack.retain(|&id| id != focused_id);
-        self.focus_stack.insert(0, focused_id);
 
         if let Some(output_id) = self.current_output {
             self.arrange_output(output_id);

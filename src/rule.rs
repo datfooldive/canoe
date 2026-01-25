@@ -59,10 +59,6 @@ pub struct Rule {
     pub floating: Option<bool>,
     /// Decoration style for matching windows
     pub decoration: Option<WindowDecoration>,
-    /// Whether this is a terminal window
-    pub is_terminal: Option<bool>,
-    /// Whether to disable swallowing for this window
-    pub disable_swallow: Option<bool>,
 }
 
 impl Rule {
@@ -108,12 +104,6 @@ pub fn apply_rules(rules: &[Rule], app_id: Option<&str>, title: Option<&str>) ->
             if let Some(decoration) = rule.decoration {
                 applied.decoration = Some(decoration);
             }
-            if let Some(is_terminal) = rule.is_terminal {
-                applied.is_terminal = Some(is_terminal);
-            }
-            if let Some(disable_swallow) = rule.disable_swallow {
-                applied.disable_swallow = Some(disable_swallow);
-            }
         }
     }
 
@@ -125,8 +115,6 @@ pub fn apply_rules(rules: &[Rule], app_id: Option<&str>, title: Option<&str>) ->
 pub struct AppliedRules {
     pub floating: Option<bool>,
     pub decoration: Option<WindowDecoration>,
-    pub is_terminal: Option<bool>,
-    pub disable_swallow: Option<bool>,
 }
 
 #[cfg(test)]
@@ -153,7 +141,6 @@ mod tests {
     fn test_rule_matching() {
         let rule = Rule {
             app_id: Some("foot".to_string()),
-            is_terminal: Some(true),
             ..Default::default()
         };
 
@@ -166,11 +153,10 @@ mod tests {
     fn test_apply_rules() {
         let rules = vec![Rule {
             app_id: Some("foot".to_string()),
-            is_terminal: Some(true),
             ..Default::default()
         }];
 
         let applied = apply_rules(&rules, Some("foot"), None);
-        assert_eq!(applied.is_terminal, Some(true));
+        assert!(applied.floating.is_none());
     }
 }

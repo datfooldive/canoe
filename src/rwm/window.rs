@@ -125,17 +125,6 @@ pub struct Window {
     /// Decoration hint from client
     pub decoration_hint: u32,
 
-    /// Is this a terminal window (for swallowing)
-    pub is_terminal: bool,
-    /// Parent window (for swallowing)
-    pub parent: Option<Weak<RefCell<Window>>>,
-    /// Window being swallowed
-    pub swallowing: Option<Weak<RefCell<Window>>>,
-    /// Window that swallowed this one
-    pub swallowed_by: Option<Weak<RefCell<Window>>>,
-    /// Disable swallowing for this window
-    pub disable_swallow: bool,
-
     /// Current operator (move/resize)
     pub operator: Operator,
     /// Pending events queue
@@ -184,11 +173,6 @@ impl Window {
             clip_state: ClipState::Unknown,
             decoration: None,
             decoration_hint: 0,
-            is_terminal: false,
-            parent: None,
-            swallowing: None,
-            swallowed_by: None,
-            disable_swallow: false,
             operator: Operator::None,
             unhandled_events: VecDeque::new(),
             position_undefined: true,

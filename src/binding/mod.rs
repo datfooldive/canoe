@@ -6,7 +6,7 @@ pub mod action;
 mod pointer;
 mod xkb;
 
-pub use action::{Action, Direction, Edge, State};
+pub use action::{Action, Direction, State};
 pub use pointer::PointerBinding;
 pub use xkb::XkbBinding;
 
