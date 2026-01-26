@@ -189,14 +189,17 @@ impl Context {
         use crate::binding::action::{default_pointer_bindings, default_xkb_bindings};
 
         // Add XKB bindings
-        for (mode, keysym, modifiers, action, event) in default_xkb_bindings() {
+        for (mode, keysym, modifiers, action, event) in
+            default_xkb_bindings(self.config.main_modifier)
+        {
             seat.add_xkb_binding(
                 XkbBinding::new(mode, keysym, modifiers, action).with_event(event),
             );
         }
 
         // Add pointer bindings
-        for (mode, button, modifiers, action) in default_pointer_bindings() {
+        for (mode, button, modifiers, action) in default_pointer_bindings(self.config.main_modifier)
+        {
             seat.add_pointer_binding(PointerBinding::new(mode, button, modifiers, action));
         }
 

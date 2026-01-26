@@ -27,6 +27,24 @@ pub mod modifiers {
     pub const MOD5: u32 = 128;
 }
 
+/// Main modifier key used for default bindings
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum MainModifier {
+    Alt,
+    #[default]
+    Super,
+}
+
+impl MainModifier {
+    pub fn mask(self) -> u32 {
+        match self {
+            Self::Alt => modifiers::ALT,
+            Self::Super => modifiers::SUPER,
+        }
+    }
+}
+
 /// Input mode for bindings
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Mode {
@@ -141,6 +159,7 @@ pub struct Config {
     pub working_directory: Option<String>,
     pub startup_cmds: Vec<Vec<String>>,
     pub xcursor_theme: Option<XCursorTheme>,
+    pub main_modifier: MainModifier,
 
     pub repeat_rate: i32,
     pub repeat_delay: i32,
@@ -160,6 +179,7 @@ impl Default for Config {
             working_directory: dirs::home_dir().map(|p| p.to_string_lossy().to_string()),
             startup_cmds: Vec::new(),
             xcursor_theme: None,
+            main_modifier: MainModifier::default(),
 
             repeat_rate: 50,
             repeat_delay: 300,
@@ -176,6 +196,7 @@ impl Default for Config {
 
 #[derive(Debug, Deserialize)]
 struct FileConfig {
+    main_modifier: Option<MainModifier>,
     ui: Option<UiConfigFile>,
     rules: Option<Vec<RuleFile>>,
 }
@@ -383,6 +404,9 @@ pub fn load_config() -> Config {
         if let Ok(contents) = std::fs::read_to_string(&path) {
             match toml::from_str::<FileConfig>(&contents) {
                 Ok(file_config) => {
+                    if let Some(main_modifier) = file_config.main_modifier {
+                        config.main_modifier = main_modifier;
+                    }
                     if let Some(ui) = file_config.ui {
                         config.ui.apply(ui);
                     }

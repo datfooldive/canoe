@@ -1,4 +1,4 @@
-# Canoe - River Window Manager
+# Canoe 🛶 - River Window Manager
 
 A stacking window manager for the River Wayland compositor, written in Rust.
 
@@ -19,17 +19,26 @@ For debug output:
 RUST_LOG=info river -c ./target/release/canoe
 ```
 
+## Configuration
+
+Canoe reads `~/.config/canoe/canoe.toml`.
+The main modifier defaults to `super`, but you can change it:
+
+```toml
+main_modifier = "alt"
+```
+
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
 |----------|--------|
-| `Alt+Shift+Return` | Open terminal (foot) |
-| `Alt+Space` | Open application launcher (fuzzel) |
-| `Alt+Shift+c` | Close focused window |
-| `Alt+Shift+q` | Quit Canoe |
-| `Alt+Tab` | Focus next window |
-| `Alt+Shift+Tab` | Focus previous window |
-| `Alt+f` | Toggle fullscreen |
+| `Super+Shift+Return` | Open terminal (foot) |
+| `Super+Space` | Open application launcher (fuzzel) |
+| `Super+Shift+c` | Close focused window |
+| `Super+Shift+q` | Quit Canoe |
+| `Super+Tab` | Focus next window |
+| `Super+Shift+Tab` | Focus previous window |
+| `Super+f` | Toggle fullscreen |
 
 ## Mouse Actions
 
@@ -38,8 +47,8 @@ RUST_LOG=info river -c ./target/release/canoe
 | Click on window | Focus window |
 | Drag titlebar | Move window |
 | Drag window edges | Resize window |
-| `Alt+Left Drag` | Move window (anywhere) |
-| `Alt+Right Drag` | Resize window (anywhere) |
+| `Super+Left Drag` | Move window (anywhere) |
+| `Super+Right Drag` | Resize window (anywhere) |
 
 ## Features
 
@@ -47,14 +56,14 @@ RUST_LOG=info river -c ./target/release/canoe
 - Yellow window borders (10px)
 - Yellow titlebars (24px)
 - Server-side decorations
-- Titlebar/edge window movement and resizing (Alt+Drag anywhere)
+- Titlebar/edge window movement and resizing (Super+Drag anywhere)
 - Window focus follows click
 
 ## Requirements
 
 - River compositor
-- foot terminal (for Alt+Shift+Return)
-- fuzzel (for Alt+Space launcher)
+- foot terminal (for Super+Shift+Return)
+- fuzzel (for Super+Space launcher)
 
 ## License
 

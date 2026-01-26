@@ -67,9 +67,9 @@ pub enum Action {
 
     /// Activate selected window menu item
     ActivateMenuHovered,
-    /// Cycle window menu for Alt-Tab
+    /// Cycle window menu entries
     WindowMenuCycle,
-    /// Activate selected window menu item for Alt-Tab
+    /// Activate selected window menu item
     WindowMenuCommit,
 
     /// Custom function action
@@ -77,40 +77,46 @@ pub enum Action {
 }
 
 /// Default keybindings configuration for stacking WM
-pub fn default_xkb_bindings() -> Vec<(Mode, u32, u32, Action, super::BindingEvent)> {
+pub fn default_xkb_bindings(
+    main_modifier: crate::config::MainModifier,
+) -> Vec<(Mode, u32, u32, Action, super::BindingEvent)> {
     use crate::config::modifiers::*;
     use xkbcommon::xkb::Keysym;
 
-    let alt = ALT;
+    let main = main_modifier.mask();
     let shift = SHIFT;
+    let (main_left, main_right) = match main_modifier {
+        crate::config::MainModifier::Alt => (Keysym::Alt_L.raw(), Keysym::Alt_R.raw()),
+        crate::config::MainModifier::Super => (Keysym::Super_L.raw(), Keysym::Super_R.raw()),
+    };
 
     vec![
         // Essential window management
         (
             Mode::Default,
             Keysym::q.raw(),
-            alt | shift,
+            main | shift,
             Action::Quit,
             super::BindingEvent::Pressed,
         ),
         (
             Mode::Default,
             Keysym::c.raw(),
-            alt | shift,
+            main | shift,
             Action::Close,
             super::BindingEvent::Pressed,
         ),
         (
             Mode::Default,
             Keysym::Down.raw(),
-            alt,
+            main,
             Action::HideFocused,
             super::BindingEvent::Pressed,
         ),
         (
             Mode::Default,
             Keysym::Up.raw(),
-            alt,
+            main,
             Action::MaximizeFocused,
             super::BindingEvent::Pressed,
         ),
@@ -118,27 +124,27 @@ pub fn default_xkb_bindings() -> Vec<(Mode, u32, u32, Action, super::BindingEven
         (
             Mode::Default,
             Keysym::Tab.raw(),
-            alt,
+            main,
             Action::WindowMenuCycle,
             super::BindingEvent::Pressed,
         ),
         (
             Mode::Default,
             Keysym::Tab.raw(),
-            alt | shift,
+            main | shift,
             Action::WindowMenuCycle,
             super::BindingEvent::Pressed,
         ),
         (
             Mode::Default,
-            Keysym::Alt_L.raw(),
+            main_left,
             0,
             Action::WindowMenuCommit,
             super::BindingEvent::Released,
         ),
         (
             Mode::Default,
-            Keysym::Alt_R.raw(),
+            main_right,
             0,
             Action::WindowMenuCommit,
             super::BindingEvent::Released,
@@ -147,7 +153,7 @@ pub fn default_xkb_bindings() -> Vec<(Mode, u32, u32, Action, super::BindingEven
         (
             Mode::Default,
             Keysym::f.raw(),
-            alt,
+            main,
             Action::ToggleFullscreen { in_window: false },
             super::BindingEvent::Pressed,
         ),
@@ -155,7 +161,7 @@ pub fn default_xkb_bindings() -> Vec<(Mode, u32, u32, Action, super::BindingEven
         (
             Mode::Default,
             Keysym::Return.raw(),
-            alt | shift,
+            main | shift,
             Action::Spawn {
                 argv: vec!["foot".to_string()],
             },
@@ -165,7 +171,7 @@ pub fn default_xkb_bindings() -> Vec<(Mode, u32, u32, Action, super::BindingEven
         (
             Mode::Default,
             Keysym::space.raw(),
-            alt,
+            main,
             Action::SpawnShell {
                 cmd: "fuzzel".to_string(),
             },
@@ -175,13 +181,24 @@ pub fn default_xkb_bindings() -> Vec<(Mode, u32, u32, Action, super::BindingEven
 }
 
 /// Default pointer bindings
-pub fn default_pointer_bindings() -> Vec<(Mode, u32, u32, Action)> {
+pub fn default_pointer_bindings(
+    main_modifier: crate::config::MainModifier,
+) -> Vec<(Mode, u32, u32, Action)> {
     use crate::config::button;
-    use crate::config::modifiers::*;
 
-    // Alt+Drag to move, Alt+Right-Drag to resize
+    // Main+Drag to move, Main+Right-Drag to resize
     vec![
-        (Mode::Default, button::LEFT, ALT, Action::PointerMove),
-        (Mode::Default, button::RIGHT, ALT, Action::PointerResize),
+        (
+            Mode::Default,
+            button::LEFT,
+            main_modifier.mask(),
+            Action::PointerMove,
+        ),
+        (
+            Mode::Default,
+            button::RIGHT,
+            main_modifier.mask(),
+            Action::PointerResize,
+        ),
     ]
 }
