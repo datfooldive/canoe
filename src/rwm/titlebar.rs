@@ -1,6 +1,7 @@
 //! Titlebar rendering for windows
 
 use super::font;
+use super::render::Renderer;
 use crate::config::UiConfig;
 use crate::protocol::RiverDecorationV1;
 use resvg::{tiny_skia, usvg};
@@ -408,6 +409,10 @@ impl Titlebar {
 
             let pixels = mmap.as_mut();
             clear_buffer(pixels);
+            let mut renderer = match Renderer::new(pixels, buffer_width, buffer_height) {
+                Some(renderer) => renderer,
+                None => return false,
+            };
 
             let border_offset = 0;
             let border_colors = if is_active {
@@ -417,25 +422,19 @@ impl Titlebar {
             };
             let mid_width = (ui.border_width - BORDER_INNER - BORDER_OUTER).max(0);
             draw_border_layer(
-                pixels,
-                buffer_width,
-                buffer_height,
+                &mut renderer,
                 border_offset,
                 BORDER_OUTER * scale,
                 border_colors.outer,
             );
             draw_border_layer(
-                pixels,
-                buffer_width,
-                buffer_height,
+                &mut renderer,
                 border_offset + BORDER_OUTER * scale,
                 mid_width * scale,
                 border_colors.mid,
             );
             draw_border_layer(
-                pixels,
-                buffer_width,
-                buffer_height,
+                &mut renderer,
                 border_offset + (BORDER_OUTER + mid_width) * scale,
                 BORDER_INNER * scale,
                 border_colors.inner,
@@ -453,10 +452,7 @@ impl Titlebar {
             if title_height > 0 {
                 let title_x = ui.border_width;
                 let title_y = ui.border_width;
-                fill_rect(
-                    pixels,
-                    buffer_width,
-                    buffer_height,
+                renderer.fill_rect(
                     title_x * scale,
                     title_y * scale,
                     content_width * scale,
@@ -475,10 +471,7 @@ impl Titlebar {
                 };
                 let button_border = rgba_to_argb(border_colors.outer);
 
-                fill_rect(
-                    pixels,
-                    buffer_width,
-                    buffer_height,
+                renderer.fill_rect(
                     (title_x + buttons.close.x) * scale,
                     (title_y + buttons.close.y) * scale,
                     buttons.close.width * scale,
@@ -492,20 +485,11 @@ impl Titlebar {
                         (title_y + buttons.close.y + (buttons.close.height - icon_size) / 2)
                             * scale;
                     if let Some(ref icons) = self.icon_cache {
-                        draw_svg_icon(
-                            pixels,
-                            buffer_width,
-                            buffer_height,
-                            &icons.close,
-                            icon_x,
-                            icon_y,
-                        );
+                        renderer.blit_pixmap(&icons.close, icon_x, icon_y);
                     }
                 } else {
                     draw_glyph_close(
-                        pixels,
-                        buffer_width,
-                        buffer_height,
+                        &mut renderer,
                         (title_x + buttons.close.x) * scale,
                         (title_y + buttons.close.y) * scale,
                         buttons.close.width * scale,
@@ -514,9 +498,7 @@ impl Titlebar {
                     );
                 }
                 draw_left_border(
-                    pixels,
-                    buffer_width,
-                    buffer_height,
+                    &mut renderer,
                     (title_x + buttons.close.x + buttons.close.width) * scale,
                     title_y * scale,
                     title_height * scale,
@@ -527,9 +509,7 @@ impl Titlebar {
                 let hide_pressed = pressed_hover == Some(TitlebarButton::Hide);
                 let hide_offset = if hide_pressed { scale } else { 0 };
                 draw_button_bevel(
-                    pixels,
-                    buffer_width,
-                    buffer_height,
+                    &mut renderer,
                     (title_x + buttons.hide.x) * scale,
                     (title_y + buttons.hide.y) * scale,
                     buttons.hide.width * scale,
@@ -540,9 +520,7 @@ impl Titlebar {
                     titlebar_height,
                 );
                 draw_left_border(
-                    pixels,
-                    buffer_width,
-                    buffer_height,
+                    &mut renderer,
                     (title_x + buttons.hide.x - 1) * scale,
                     title_y * scale,
                     title_height * scale,
@@ -557,20 +535,11 @@ impl Titlebar {
                         * scale
                         + hide_offset;
                     if let Some(ref icons) = self.icon_cache {
-                        draw_svg_icon(
-                            pixels,
-                            buffer_width,
-                            buffer_height,
-                            &icons.minimize,
-                            icon_x,
-                            icon_y,
-                        );
+                        renderer.blit_pixmap(&icons.minimize, icon_x, icon_y);
                     }
                 } else {
                     draw_glyph_caret(
-                        pixels,
-                        buffer_width,
-                        buffer_height,
+                        &mut renderer,
                         (title_x + buttons.hide.x) * scale + hide_offset,
                         (title_y + buttons.hide.y) * scale + hide_offset,
                         buttons.hide.width * scale,
@@ -583,9 +552,7 @@ impl Titlebar {
                 let maximize_pressed = pressed_hover == Some(TitlebarButton::Maximize);
                 let maximize_offset = if maximize_pressed { scale } else { 0 };
                 draw_button_bevel(
-                    pixels,
-                    buffer_width,
-                    buffer_height,
+                    &mut renderer,
                     (title_x + buttons.maximize.x) * scale,
                     (title_y + buttons.maximize.y) * scale,
                     buttons.maximize.width * scale,
@@ -596,9 +563,7 @@ impl Titlebar {
                     titlebar_height,
                 );
                 draw_left_border(
-                    pixels,
-                    buffer_width,
-                    buffer_height,
+                    &mut renderer,
                     (title_x + buttons.maximize.x - 1) * scale,
                     title_y * scale,
                     title_height * scale,
@@ -620,13 +585,11 @@ impl Titlebar {
                         } else {
                             &icons.maximize
                         };
-                        draw_svg_icon(pixels, buffer_width, buffer_height, icon, icon_x, icon_y);
+                        renderer.blit_pixmap(icon, icon_x, icon_y);
                     }
                 } else if is_maximized {
                     draw_glyph_caret_pair(
-                        pixels,
-                        buffer_width,
-                        buffer_height,
+                        &mut renderer,
                         (title_x + buttons.maximize.x) * scale + maximize_offset,
                         (title_y + buttons.maximize.y) * scale + maximize_offset,
                         buttons.maximize.width * scale,
@@ -635,9 +598,7 @@ impl Titlebar {
                     );
                 } else {
                     draw_glyph_caret(
-                        pixels,
-                        buffer_width,
-                        buffer_height,
+                        &mut renderer,
                         (title_x + buttons.maximize.x) * scale + maximize_offset,
                         (title_y + buttons.maximize.y) * scale + maximize_offset,
                         buttons.maximize.width * scale,
@@ -649,10 +610,7 @@ impl Titlebar {
 
                 let separator_y = title_y + title_height;
                 if separator_y >= 0 && separator_y < height - ui.border_width {
-                    fill_rect(
-                        pixels,
-                        buffer_width,
-                        buffer_height,
+                    renderer.fill_rect(
                         title_x * scale,
                         separator_y * scale,
                         content_width * scale,
@@ -674,10 +632,12 @@ impl Titlebar {
                             } else {
                                 ui.titlebar_text_inactive
                             };
+                            let render_width = renderer.width();
+                            let render_height = renderer.height();
                             render_title(
-                                pixels,
-                                buffer_width,
-                                buffer_height,
+                                renderer.data_mut(),
+                                render_width,
+                                render_height,
                                 title_str,
                                 (title_x + text_start) * scale,
                                 title_y * scale,
@@ -863,79 +823,6 @@ fn rasterize_icon(svg: &str, size_px: i32) -> Option<tiny_skia::Pixmap> {
     Some(pixmap)
 }
 
-fn draw_svg_icon(
-    pixels: &mut [u8],
-    buffer_width: i32,
-    buffer_height: i32,
-    icon: &tiny_skia::Pixmap,
-    x: i32,
-    y: i32,
-) {
-    if buffer_width <= 0 || buffer_height <= 0 {
-        return;
-    }
-
-    let icon_w = icon.width() as i32;
-    let icon_h = icon.height() as i32;
-    if icon_w <= 0 || icon_h <= 0 {
-        return;
-    }
-
-    let x0 = x.max(0);
-    let y0 = y.max(0);
-    let x1 = (x + icon_w).min(buffer_width);
-    let y1 = (y + icon_h).min(buffer_height);
-    if x1 <= x0 || y1 <= y0 {
-        return;
-    }
-
-    let icon_data = icon.data();
-    for row in y0..y1 {
-        let src_y = row - y;
-        for col in x0..x1 {
-            let src_x = col - x;
-            let src_offset = ((src_y * icon_w + src_x) * 4) as usize;
-            if src_offset + 4 <= icon_data.len() {
-                let src_r = icon_data[src_offset];
-                let src_g = icon_data[src_offset + 1];
-                let src_b = icon_data[src_offset + 2];
-                let src_a = icon_data[src_offset + 3];
-                if src_a == 0 {
-                    continue;
-                }
-                let dst_offset = ((row * buffer_width + col) * 4) as usize;
-                if dst_offset + 4 <= pixels.len() {
-                    blend_pixel_premul(
-                        &mut pixels[dst_offset..dst_offset + 4],
-                        src_r,
-                        src_g,
-                        src_b,
-                        src_a,
-                    );
-                }
-            }
-        }
-    }
-}
-
-/// Alpha blend a premultiplied RGBA source over an ARGB destination.
-fn blend_pixel_premul(bg: &mut [u8], src_r: u8, src_g: u8, src_b: u8, src_a: u8) {
-    let inv_a = 255u16.saturating_sub(src_a as u16);
-
-    // Read background (native endian ARGB)
-    let bg_val = u32::from_ne_bytes([bg[0], bg[1], bg[2], bg[3]]);
-    let bg_r = ((bg_val >> 16) & 0xff) as u16;
-    let bg_g = ((bg_val >> 8) & 0xff) as u16;
-    let bg_b = (bg_val & 0xff) as u16;
-
-    let out_r = (src_r as u16 + (bg_r * inv_a) / 255) as u8;
-    let out_g = (src_g as u16 + (bg_g * inv_a) / 255) as u8;
-    let out_b = (src_b as u16 + (bg_b * inv_a) / 255) as u8;
-
-    let out_argb = 0xFF000000 | ((out_r as u32) << 16) | ((out_g as u32) << 8) | (out_b as u32);
-    bg.copy_from_slice(&out_argb.to_ne_bytes());
-}
-
 /// Convert RGBA (0xRRGGBBAA) to ARGB (0xAARRGGBB) for wl_shm format
 fn rgba_to_argb(rgba: u32) -> u32 {
     let r = (rgba >> 24) & 0xff;
@@ -978,93 +865,34 @@ fn clear_buffer(pixels: &mut [u8]) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn fill_rect(
-    pixels: &mut [u8],
-    buffer_width: i32,
-    buffer_height: i32,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-    color_argb: u32,
-) {
-    if width <= 0 || height <= 0 {
-        return;
-    }
-
-    let x0 = x.max(0);
-    let y0 = y.max(0);
-    let x1 = (x + width).min(buffer_width);
-    let y1 = (y + height).min(buffer_height);
-    if x1 <= x0 || y1 <= y0 {
-        return;
-    }
-
-    let color_bytes = color_argb.to_ne_bytes();
-    for row in y0..y1 {
-        for col in x0..x1 {
-            let offset = ((row * buffer_width + col) * 4) as usize;
-            if offset + 4 <= pixels.len() {
-                pixels[offset..offset + 4].copy_from_slice(&color_bytes);
-            }
-        }
-    }
-}
-
-fn draw_border_layer(
-    pixels: &mut [u8],
-    buffer_width: i32,
-    buffer_height: i32,
-    offset: i32,
-    thickness: i32,
-    color: u32,
-) {
+fn draw_border_layer(renderer: &mut Renderer, offset: i32, thickness: i32, color: u32) {
     if thickness <= 0 {
         return;
     }
 
-    let layer_width = buffer_width - offset * 2;
-    let layer_height = buffer_height - offset * 2;
+    let layer_width = renderer.width() - offset * 2;
+    let layer_height = renderer.height() - offset * 2;
     if layer_width <= 0 || layer_height <= 0 {
         return;
     }
 
     let argb = rgba_to_argb(color);
-    fill_rect(
-        pixels,
-        buffer_width,
-        buffer_height,
-        offset,
-        offset,
-        layer_width,
-        thickness,
-        argb,
-    );
-    fill_rect(
-        pixels,
-        buffer_width,
-        buffer_height,
+    renderer.fill_rect(offset, offset, layer_width, thickness, argb);
+    renderer.fill_rect(
         offset,
         offset + layer_height - thickness,
         layer_width,
         thickness,
         argb,
     );
-    fill_rect(
-        pixels,
-        buffer_width,
-        buffer_height,
+    renderer.fill_rect(
         offset,
         offset + thickness,
         thickness,
         layer_height - thickness * 2,
         argb,
     );
-    fill_rect(
-        pixels,
-        buffer_width,
-        buffer_height,
+    renderer.fill_rect(
         offset + layer_width - thickness,
         offset + thickness,
         thickness,
@@ -1075,9 +903,7 @@ fn draw_border_layer(
 
 #[allow(clippy::too_many_arguments)]
 fn draw_button_bevel(
-    pixels: &mut [u8],
-    buffer_width: i32,
-    buffer_height: i32,
+    renderer: &mut Renderer,
     x: i32,
     y: i32,
     size: i32,
@@ -1094,38 +920,11 @@ fn draw_button_bevel(
         (highlight_argb, shadow_argb)
     };
 
-    fill_rect(
-        pixels,
-        buffer_width,
-        buffer_height,
-        x,
-        y,
-        size,
-        size,
-        bg_argb,
-    );
+    renderer.fill_rect(x, y, size, size, bg_argb);
 
     // highlight: horizontal, vertical
-    fill_rect(
-        pixels,
-        buffer_width,
-        buffer_height,
-        x,
-        y,
-        size,
-        unit,
-        highlight_argb,
-    );
-    fill_rect(
-        pixels,
-        buffer_width,
-        buffer_height,
-        x,
-        y,
-        unit,
-        size,
-        highlight_argb,
-    );
+    renderer.fill_rect(x, y, size, unit, highlight_argb);
+    renderer.fill_rect(x, y, unit, size, highlight_argb);
 
     if pressed {
         return;
@@ -1133,20 +932,14 @@ fn draw_button_bevel(
 
     if size >= 3 * unit {
         // shadow, inner: horizontal, vertical
-        fill_rect(
-            pixels,
-            buffer_width,
-            buffer_height,
+        renderer.fill_rect(
             x + unit,
             y + size - 2 * unit,
             size - 2 * unit,
             unit,
             shadow_argb,
         );
-        fill_rect(
-            pixels,
-            buffer_width,
-            buffer_height,
+        renderer.fill_rect(
             x + size - 2 * unit,
             y + unit,
             unit,
@@ -1156,33 +949,13 @@ fn draw_button_bevel(
     }
 
     // shadow, outer: horizontal, vertical
-    fill_rect(
-        pixels,
-        buffer_width,
-        buffer_height,
-        x,
-        y + size - unit,
-        size,
-        unit,
-        shadow_argb,
-    );
-    fill_rect(
-        pixels,
-        buffer_width,
-        buffer_height,
-        x + size - unit,
-        y,
-        unit,
-        size,
-        shadow_argb,
-    );
+    renderer.fill_rect(x, y + size - unit, size, unit, shadow_argb);
+    renderer.fill_rect(x + size - unit, y, unit, size, shadow_argb);
 }
 
 #[allow(clippy::too_many_arguments)]
 fn draw_left_border(
-    pixels: &mut [u8],
-    buffer_width: i32,
-    buffer_height: i32,
+    renderer: &mut Renderer,
     x: i32,
     y: i32,
     height: i32,
@@ -1193,23 +966,12 @@ fn draw_left_border(
         return;
     }
     let unit = (height / titlebar_height.max(1)).max(1);
-    fill_rect(
-        pixels,
-        buffer_width,
-        buffer_height,
-        x,
-        y,
-        unit,
-        height,
-        color_argb,
-    );
+    renderer.fill_rect(x, y, unit, height, color_argb);
 }
 
 #[allow(clippy::too_many_arguments)]
 fn draw_glyph_close(
-    pixels: &mut [u8],
-    buffer_width: i32,
-    buffer_height: i32,
+    renderer: &mut Renderer,
     x: i32,
     y: i32,
     size: i32,
@@ -1222,24 +984,13 @@ fn draw_glyph_close(
     let line_x = x + 6 * unit;
     let line_w = size - 12 * unit;
     if line_w > 0 {
-        fill_rect(
-            pixels,
-            buffer_width,
-            buffer_height,
-            line_x,
-            line_y,
-            line_w,
-            unit,
-            color_argb,
-        );
+        renderer.fill_rect(line_x, line_y, line_w, unit, color_argb);
     }
 }
 
 #[allow(clippy::too_many_arguments)]
 fn draw_glyph_caret(
-    pixels: &mut [u8],
-    buffer_width: i32,
-    buffer_height: i32,
+    renderer: &mut Renderer,
     x: i32,
     y: i32,
     size: i32,
@@ -1264,24 +1015,13 @@ fn draw_glyph_caret(
             let w = unit + i * 2 * unit;
             (mid_x - i * unit, w)
         };
-        fill_rect(
-            pixels,
-            buffer_width,
-            buffer_height,
-            start,
-            row,
-            width,
-            unit,
-            color_argb,
-        );
+        renderer.fill_rect(start, row, width, unit, color_argb);
     }
 }
 
 #[allow(clippy::too_many_arguments)]
 fn draw_glyph_caret_pair(
-    pixels: &mut [u8],
-    buffer_width: i32,
-    buffer_height: i32,
+    renderer: &mut Renderer,
     x: i32,
     y: i32,
     size: i32,
@@ -1302,16 +1042,7 @@ fn draw_glyph_caret_pair(
         let row = top_y + i * unit;
         let width = unit + i * 2 * unit;
         let start = mid_x - i * unit;
-        fill_rect(
-            pixels,
-            buffer_width,
-            buffer_height,
-            start,
-            row,
-            width,
-            unit,
-            color_argb,
-        );
+        renderer.fill_rect(start, row, width, unit, color_argb);
     }
 
     let down_top = top_y + glyph_height_px + gap - 5 * unit;
@@ -1319,16 +1050,7 @@ fn draw_glyph_caret_pair(
         let row = down_top + i * unit;
         let width = unit + (span - i) * 2 * unit;
         let start = mid_x - (span - i) * unit;
-        fill_rect(
-            pixels,
-            buffer_width,
-            buffer_height,
-            start,
-            row,
-            width,
-            unit,
-            color_argb,
-        );
+        renderer.fill_rect(start, row, width, unit, color_argb);
     }
 }
 

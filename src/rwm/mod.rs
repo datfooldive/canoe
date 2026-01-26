@@ -5,6 +5,7 @@ mod desktop;
 mod font;
 mod menu;
 mod output;
+mod render;
 mod seat;
 mod shield;
 pub mod titlebar;
