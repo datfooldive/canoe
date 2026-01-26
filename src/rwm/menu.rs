@@ -3,6 +3,7 @@
 use crate::config::UiConfig;
 use memmap2::MmapMut;
 use std::fs::File;
+use std::hash::{Hash, Hasher};
 use std::os::fd::AsFd;
 use wayland_client::protocol::{
     wl_buffer, wl_compositor, wl_region, wl_shm, wl_shm_pool, wl_surface,
@@ -41,6 +42,7 @@ pub struct WindowMenu {
     pub origin_x: i32,
     pub origin_y: i32,
     pub theme: MenuTheme,
+    cache: Option<MenuCache>,
 }
 
 const MENU_BORDER: i32 = 1;
@@ -62,6 +64,25 @@ pub struct MenuTheme {
     pub text: u32,
     pub highlight_bg: u32,
     pub highlight_text: u32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct MenuCacheKey {
+    width: i32,
+    height: i32,
+    scale: i32,
+    font_size: f32,
+    bg: u32,
+    text: u32,
+    highlight_bg: u32,
+    highlight_text: u32,
+    items_hash: u64,
+}
+
+#[derive(Clone, Debug)]
+struct MenuCache {
+    key: MenuCacheKey,
+    pixels: Vec<u8>,
 }
 
 impl MenuTheme {
@@ -107,6 +128,7 @@ impl WindowMenu {
             origin_x,
             origin_y,
             theme,
+            cache: None,
         }
     }
 
@@ -258,105 +280,42 @@ impl WindowMenu {
             return;
         }
 
+        if !self.ensure_cache() {
+            return;
+        }
+
         let Some(ref mut mmap) = self.mmap else {
             return;
         };
 
-        let scale = self.scale.max(1);
-        let menu_w_px = menu_w * scale;
-        let menu_h_px = menu_h * scale;
-
         let pixels = mmap.as_mut();
-        clear_buffer(pixels);
+        let cache_pixels = match self.cache.as_ref() {
+            Some(cache) => cache.pixels.as_slice(),
+            None => return,
+        };
+        if cache_pixels.len() != pixels.len() {
+            return;
+        }
+        pixels.copy_from_slice(cache_pixels);
+
         let mut renderer = match Renderer::new(pixels, self.buffer_width, self.buffer_height) {
             Some(renderer) => renderer,
             None => return,
         };
 
-        draw_shadow(
-            &mut renderer,
-            menu_w_px,
-            menu_h_px,
-            rgba_to_argb(SHADOW_COLOR),
-        );
-
-        renderer.fill_rect(0, 0, menu_w_px, menu_h_px, rgba_to_argb(self.theme.bg));
-
-        draw_border_rect(
-            &mut renderer,
-            0,
-            0,
-            menu_w_px,
-            menu_h_px,
-            rgba_to_argb(BORDER_COLOR),
-        );
-
         let item_h = item_height(&self.theme);
-        let start_x = MENU_BORDER + ITEM_PADDING_X;
-        let mut y = MENU_BORDER;
-        let text_start_x = start_x + ICON_SIZE + ICON_GAP;
-        let text_area_w = menu_w - MENU_BORDER * 2 - text_start_x + MENU_BORDER;
-
-        for (idx, item) in self.items.iter().enumerate() {
-            let is_active = self.hovered == Some(idx);
-            let bg = if is_active {
-                rgba_to_argb(self.theme.highlight_bg)
-            } else {
-                rgba_to_argb(self.theme.bg)
-            };
-            let text_color = if is_active {
-                rgba_to_argb(self.theme.highlight_text)
-            } else {
-                rgba_to_argb(self.theme.text)
-            };
-            let icon_color = if is_active {
-                text_color
-            } else {
-                rgba_to_argb(self.theme.text)
-            };
-
-            renderer.fill_rect(
-                MENU_BORDER * scale,
-                y * scale,
-                (menu_w - MENU_BORDER * 2) * scale,
-                item_h * scale,
-                bg,
-            );
-
-            if item.hidden {
-                draw_dashed_rect(
-                    &mut renderer,
-                    start_x * scale,
-                    (y + (item_h - ICON_SIZE) / 2) * scale,
-                    ICON_SIZE * scale,
-                    ICON_SIZE * scale,
-                    icon_color,
-                );
+        let scale = self.scale.max(1);
+        let row_ctx = MenuRowContext {
+            menu_w,
+            item_h,
+            scale,
+            theme: &self.theme,
+        };
+        if let Some(idx) = self.hovered {
+            if let Some(item) = self.items.get(idx) {
+                let row_y = MENU_BORDER + (idx as i32 * item_h);
+                draw_menu_row(&mut renderer, item, row_y, true, &row_ctx);
             }
-            if item.active {
-                draw_diamond(
-                    &mut renderer,
-                    (start_x + (ICON_SIZE - ACTIVE_DIAMOND_SIZE) / 2) * scale,
-                    (y + (item_h - ACTIVE_DIAMOND_SIZE) / 2) * scale,
-                    ACTIVE_DIAMOND_SIZE * scale,
-                    text_color,
-                );
-            }
-
-            renderer.render_text(
-                &item.title,
-                text_start_x * scale,
-                y * scale,
-                text_area_w * scale,
-                item_h * scale,
-                scale,
-                text_color,
-                self.theme.font_size,
-                self.theme.font_name.as_deref(),
-                0,
-            );
-
-            y += item_h;
         }
     }
 
@@ -439,6 +398,166 @@ fn measure_menu(items: &[MenuItem], theme: &MenuTheme) -> (i32, i32) {
     let menu_w = content_w + MENU_BORDER * 2;
     let menu_h = content_h + MENU_BORDER * 2;
     (menu_w + SHADOW_SIZE, menu_h + SHADOW_SIZE)
+}
+
+fn items_hash(items: &[MenuItem]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for item in items {
+        item.window_id.hash(&mut hasher);
+        item.title.hash(&mut hasher);
+        item.hidden.hash(&mut hasher);
+        item.active.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+impl WindowMenu {
+    fn cache_key(&self) -> MenuCacheKey {
+        MenuCacheKey {
+            width: self.buffer_width,
+            height: self.buffer_height,
+            scale: self.scale,
+            font_size: self.theme.font_size,
+            bg: self.theme.bg,
+            text: self.theme.text,
+            highlight_bg: self.theme.highlight_bg,
+            highlight_text: self.theme.highlight_text,
+            items_hash: items_hash(&self.items),
+        }
+    }
+
+    fn ensure_cache(&mut self) -> bool {
+        let key = self.cache_key();
+        let needs_rebuild = match self.cache {
+            Some(ref cache) => cache.key != key,
+            None => true,
+        };
+
+        if !needs_rebuild {
+            return true;
+        }
+
+        let mut pixels = vec![0u8; (self.buffer_width * self.buffer_height * 4) as usize];
+        clear_buffer(&mut pixels);
+        let mut renderer = match Renderer::new(&mut pixels, self.buffer_width, self.buffer_height) {
+            Some(renderer) => renderer,
+            None => return false,
+        };
+
+        let menu_w = self.menu_width();
+        let menu_h = self.menu_height();
+        let scale = self.scale.max(1);
+        let menu_w_px = menu_w * scale;
+        let menu_h_px = menu_h * scale;
+
+        draw_shadow(
+            &mut renderer,
+            menu_w_px,
+            menu_h_px,
+            rgba_to_argb(SHADOW_COLOR),
+        );
+
+        renderer.fill_rect(0, 0, menu_w_px, menu_h_px, rgba_to_argb(self.theme.bg));
+
+        draw_border_rect(
+            &mut renderer,
+            0,
+            0,
+            menu_w_px,
+            menu_h_px,
+            rgba_to_argb(BORDER_COLOR),
+        );
+
+        let item_h = item_height(&self.theme);
+        let row_ctx = MenuRowContext {
+            menu_w,
+            item_h,
+            scale,
+            theme: &self.theme,
+        };
+        for (idx, item) in self.items.iter().enumerate() {
+            let row_y = MENU_BORDER + (idx as i32 * item_h);
+            draw_menu_row(&mut renderer, item, row_y, false, &row_ctx);
+        }
+
+        self.cache = Some(MenuCache { key, pixels });
+        true
+    }
+}
+
+struct MenuRowContext<'a> {
+    menu_w: i32,
+    item_h: i32,
+    scale: i32,
+    theme: &'a MenuTheme,
+}
+
+fn draw_menu_row(
+    renderer: &mut Renderer,
+    item: &MenuItem,
+    row_y: i32,
+    is_active: bool,
+    ctx: &MenuRowContext<'_>,
+) {
+    let bg = if is_active {
+        rgba_to_argb(ctx.theme.highlight_bg)
+    } else {
+        rgba_to_argb(ctx.theme.bg)
+    };
+    let text_color = if is_active {
+        rgba_to_argb(ctx.theme.highlight_text)
+    } else {
+        rgba_to_argb(ctx.theme.text)
+    };
+    let icon_color = if is_active {
+        text_color
+    } else {
+        rgba_to_argb(ctx.theme.text)
+    };
+
+    renderer.fill_rect(
+        MENU_BORDER * ctx.scale,
+        row_y * ctx.scale,
+        (ctx.menu_w - MENU_BORDER * 2) * ctx.scale,
+        ctx.item_h * ctx.scale,
+        bg,
+    );
+
+    let start_x = MENU_BORDER + ITEM_PADDING_X;
+    if item.hidden {
+        draw_dashed_rect(
+            renderer,
+            start_x * ctx.scale,
+            (row_y + (ctx.item_h - ICON_SIZE) / 2) * ctx.scale,
+            ICON_SIZE * ctx.scale,
+            ICON_SIZE * ctx.scale,
+            icon_color,
+        );
+    }
+    if item.active {
+        draw_diamond(
+            renderer,
+            (start_x + (ICON_SIZE - ACTIVE_DIAMOND_SIZE) / 2) * ctx.scale,
+            (row_y + (ctx.item_h - ACTIVE_DIAMOND_SIZE) / 2) * ctx.scale,
+            ACTIVE_DIAMOND_SIZE * ctx.scale,
+            text_color,
+        );
+    }
+
+    let text_start_x = start_x + ICON_SIZE + ICON_GAP;
+    let text_area_w = ctx.menu_w - MENU_BORDER * 2 - text_start_x + MENU_BORDER;
+    renderer.render_text(
+        &item.title,
+        text_start_x * ctx.scale,
+        row_y * ctx.scale,
+        text_area_w * ctx.scale,
+        ctx.item_h * ctx.scale,
+        ctx.scale,
+        text_color,
+        ctx.theme.font_size,
+        ctx.theme.font_name.as_deref(),
+        0,
+    );
 }
 
 fn rgba_to_argb(rgba: u32) -> u32 {
