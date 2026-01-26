@@ -181,6 +181,11 @@ pub struct Titlebar {
     icon_cache: Option<IconCache>,
     /// Whether titlebar needs redraw
     pub dirty: bool,
+    last_title: Option<String>,
+    last_is_active: bool,
+    last_is_maximized: bool,
+    last_hovered: Option<TitlebarButton>,
+    last_left_down: bool,
 }
 
 impl Titlebar {
@@ -202,6 +207,11 @@ impl Titlebar {
             scale: 1,
             icon_cache: None,
             dirty: true,
+            last_title: None,
+            last_is_active: false,
+            last_is_maximized: false,
+            last_hovered: None,
+            last_left_down: false,
         }
     }
 
@@ -351,7 +361,28 @@ impl Titlebar {
         hovered_button: Option<TitlebarButton>,
         left_down: bool,
         ui: &UiConfig,
-    ) {
+    ) -> bool {
+        let title_changed = self.last_title.as_deref() != title;
+        let state_changed = title_changed
+            || self.last_is_active != is_active
+            || self.last_is_maximized != is_maximized
+            || self.last_hovered != hovered_button
+            || self.last_left_down != left_down;
+        if state_changed {
+            if title_changed {
+                self.last_title = title.map(str::to_owned);
+            }
+            self.last_is_active = is_active;
+            self.last_is_maximized = is_maximized;
+            self.last_hovered = hovered_button;
+            self.last_left_down = left_down;
+            self.dirty = true;
+        }
+
+        if !self.dirty {
+            return false;
+        }
+
         let scale = self.scale.max(1);
         let titlebar_height = titlebar_height(ui);
         let icon_size = icon_size_for_titlebar(titlebar_height);
@@ -372,7 +403,7 @@ impl Titlebar {
                 || content_width <= 0
                 || content_height <= 0
             {
-                return;
+                return false;
             }
 
             let pixels = mmap.as_mut();
@@ -663,7 +694,9 @@ impl Titlebar {
             }
 
             self.dirty = false;
+            return true;
         }
+        false
     }
 
     /// Commit the titlebar surface

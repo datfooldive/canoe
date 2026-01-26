@@ -731,7 +731,7 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                                 }
 
                                 // Render titlebar content
-                                titlebar.render(
+                                let did_render = titlebar.render(
                                     title.as_deref(),
                                     is_focused,
                                     is_maximized,
@@ -746,7 +746,7 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                                 titlebar.set_offset(-border_width, -border_width - titlebar_height);
 
                                 // Sync and commit (only if we have a buffer)
-                                if titlebar.buffer.is_some() {
+                                if did_render && titlebar.buffer.is_some() {
                                     titlebar.sync_next_commit();
                                     titlebar.commit();
                                 }
