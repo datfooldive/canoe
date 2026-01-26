@@ -196,8 +196,13 @@ fn open_window_menu(
         pointer_y,
         menu_theme,
     );
+    let mut initial_preview = None;
     if mode == canoe::WindowMenuMode::AltTab {
         menu.select_window(focused_window);
+        menu.select_next();
+        initial_preview = menu
+            .hovered
+            .and_then(|idx| menu.items.get(idx).map(|item| item.window_id));
     }
     let mut local_x = pointer_x.max(0);
     let mut local_y = pointer_y.max(0);
@@ -233,6 +238,12 @@ fn open_window_menu(
     let mut context = state.context.borrow_mut();
     context.window_menu = Some(menu);
     context.window_menu_mode = Some(mode);
+    if mode == canoe::WindowMenuMode::AltTab {
+        context.begin_alt_tab();
+        if let Some(window_id) = initial_preview {
+            context.preview_alt_tab_window(window_id);
+        }
+    }
 }
 
 fn ensure_window_menu_shield(
@@ -478,6 +489,7 @@ fn handle_window_menu_cycle(state: &mut AppState, qh: &QueueHandle<AppState>) {
     let mut should_render = false;
     let mut open_new = false;
     let mut ensure_shield = None;
+    let mut preview_window = None;
 
     {
         let mut context = state.context.borrow_mut();
@@ -486,6 +498,9 @@ fn handle_window_menu_cycle(state: &mut AppState, qh: &QueueHandle<AppState>) {
             if is_alt_tab {
                 if menu.select_next() {
                     should_render = true;
+                    preview_window = menu
+                        .hovered
+                        .and_then(|idx| menu.items.get(idx).map(|item| item.window_id));
                 }
                 ensure_shield = Some(menu.output_id);
             } else {
@@ -494,6 +509,10 @@ fn handle_window_menu_cycle(state: &mut AppState, qh: &QueueHandle<AppState>) {
             }
         } else {
             open_new = true;
+        }
+
+        if let Some(window_id) = preview_window {
+            context.preview_alt_tab_window(window_id);
         }
     }
 

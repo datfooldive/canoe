@@ -57,6 +57,10 @@ pub struct Context {
     pub window_menu: Option<WindowMenu>,
     pub window_menu_mode: Option<WindowMenuMode>,
     pub window_menu_shield: Option<super::ShieldSurface>,
+    window_menu_alt_tab_stack: Option<Vec<WindowId>>,
+    window_menu_alt_tab_focused: Option<WindowId>,
+    window_menu_alt_tab_preview: Option<WindowId>,
+    window_menu_alt_tab_preview_was_hidden: bool,
 }
 
 impl Context {
@@ -92,6 +96,10 @@ impl Context {
             window_menu: None,
             window_menu_mode: None,
             window_menu_shield: None,
+            window_menu_alt_tab_stack: None,
+            window_menu_alt_tab_focused: None,
+            window_menu_alt_tab_preview: None,
+            window_menu_alt_tab_preview_was_hidden: false,
         }
     }
 
@@ -250,6 +258,21 @@ impl Context {
         self.focused_window = Some(window_id);
 
         // Actually focus the window via seat
+        if let (Some(window), Some(seat_id)) = (self.windows.get(&window_id), self.current_seat) {
+            if let Some(seat) = self.seats.get(&seat_id) {
+                seat.borrow().focus_window(&window.borrow());
+            }
+        }
+
+        if let Some(window) = self.windows.get(&window_id) {
+            let window = window.borrow();
+            self.log_focused_window_info(window_id, &window);
+        }
+    }
+
+    fn focus_preview(&mut self, window_id: WindowId) {
+        self.focused_window = Some(window_id);
+
         if let (Some(window), Some(seat_id)) = (self.windows.get(&window_id), self.current_seat) {
             if let Some(seat) = self.seats.get(&seat_id) {
                 seat.borrow().focus_window(&window.borrow());
@@ -1470,6 +1493,7 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
             return;
         };
         let window_id = menu.items.get(idx).map(|item| item.window_id);
+        self.clear_alt_tab_state();
         self.window_menu = None;
         self.window_menu_mode = None;
         self.window_menu_shield = None;
@@ -1492,9 +1516,102 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
 
     /// Close the window menu if open.
     pub fn close_window_menu(&mut self) {
+        if self.window_menu_mode == Some(WindowMenuMode::AltTab) {
+            self.restore_alt_tab_state();
+        } else {
+            self.clear_alt_tab_state();
+        }
         self.window_menu = None;
         self.window_menu_mode = None;
         self.window_menu_shield = None;
+    }
+
+    pub fn begin_alt_tab(&mut self) {
+        if self.window_menu_alt_tab_stack.is_some() {
+            return;
+        }
+        self.window_menu_alt_tab_stack = Some(self.focus_stack.clone());
+        self.window_menu_alt_tab_focused = self.focused_window;
+        self.window_menu_alt_tab_preview = None;
+        self.window_menu_alt_tab_preview_was_hidden = false;
+    }
+
+    pub fn preview_alt_tab_window(&mut self, window_id: WindowId) {
+        if self.window_menu_mode != Some(WindowMenuMode::AltTab) {
+            return;
+        }
+        if self.window_menu_alt_tab_stack.is_none() {
+            self.begin_alt_tab();
+        }
+        if self.window_menu_alt_tab_preview == Some(window_id) {
+            return;
+        }
+
+        if let Some(prev_id) = self.window_menu_alt_tab_preview.take() {
+            if self.window_menu_alt_tab_preview_was_hidden {
+                if let Some(prev_window) = self.windows.get(&prev_id) {
+                    prev_window.borrow_mut().hide();
+                }
+            }
+        }
+        self.window_menu_alt_tab_preview_was_hidden = false;
+
+        if let Some(ref order) = self.window_menu_alt_tab_stack {
+            self.restore_stack_order(order);
+        }
+
+        if let Some(window) = self.windows.get(&window_id) {
+            let mut was_hidden = false;
+            {
+                let mut w = window.borrow_mut();
+                if w.hidden {
+                    was_hidden = true;
+                    w.show();
+                }
+                w.place_top();
+            }
+            self.focus_preview(window_id);
+            self.window_menu_alt_tab_preview = Some(window_id);
+            self.window_menu_alt_tab_preview_was_hidden = was_hidden;
+        }
+    }
+
+    fn restore_alt_tab_state(&mut self) {
+        if let Some(prev_id) = self.window_menu_alt_tab_preview.take() {
+            if self.window_menu_alt_tab_preview_was_hidden {
+                if let Some(prev_window) = self.windows.get(&prev_id) {
+                    prev_window.borrow_mut().hide();
+                }
+            }
+        }
+        self.window_menu_alt_tab_preview_was_hidden = false;
+
+        if let Some(ref order) = self.window_menu_alt_tab_stack {
+            self.restore_stack_order(order);
+        }
+
+        if let Some(window_id) = self.window_menu_alt_tab_focused {
+            if self.windows.contains_key(&window_id) {
+                self.focus_preview(window_id);
+            }
+        }
+
+        self.clear_alt_tab_state();
+    }
+
+    fn restore_stack_order(&self, order: &[WindowId]) {
+        for window_id in order.iter().rev() {
+            if let Some(window) = self.windows.get(window_id) {
+                window.borrow().place_top();
+            }
+        }
+    }
+
+    fn clear_alt_tab_state(&mut self) {
+        self.window_menu_alt_tab_stack = None;
+        self.window_menu_alt_tab_focused = None;
+        self.window_menu_alt_tab_preview = None;
+        self.window_menu_alt_tab_preview_was_hidden = false;
     }
 
     /// Update the cursor shape based on resize state or border hover.
