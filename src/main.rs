@@ -395,13 +395,13 @@ fn update_titlebar_hover_from_global(
     pointer_x: i32,
     pointer_y: i32,
 ) -> bool {
-    let (win_x, win_y, win_w) = {
+    let (win_x, win_y, win_w, swallow_top) = {
         let context = state.context.borrow();
         let Some(window) = context.windows.get(&window_id) else {
             return false;
         };
         let w = window.borrow();
-        (w.x, w.y, w.width)
+        (w.x, w.y, w.width, w.swallow_top)
     };
 
     let (border_width, titlebar_height) = {
@@ -409,7 +409,7 @@ fn update_titlebar_hover_from_global(
         (ui.border_width, rwm::titlebar::titlebar_height(ui))
     };
     let origin_x = win_x - border_width;
-    let origin_y = win_y - border_width - titlebar_height;
+    let origin_y = win_y - border_width - titlebar_height + swallow_top;
     let local_x = pointer_x - origin_x;
     let local_y = pointer_y - origin_y;
 
@@ -602,7 +602,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
                     }
                 }
                 "river_window_manager_v1" => {
-                    let rwm: RiverWindowManagerV1 = registry.bind(name, version.min(2), qh, ());
+                    let rwm: RiverWindowManagerV1 = registry.bind(name, version.min(3), qh, ());
                     state.globals.rwm = Some(rwm.clone());
                     state.context.borrow_mut().rwm = Some(rwm);
                 }
@@ -714,6 +714,7 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                         let height = w.height;
                         let hovered_button = w.titlebar_hovered;
                         let titlebar_left_down = w.titlebar_left_down;
+                        let swallow_top = w.swallow_top;
 
                         // Update titlebar if it exists and window has valid dimensions
                         let scale = w
@@ -724,8 +725,9 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                             .unwrap_or(1);
                         if let Some(ref mut titlebar) = w.titlebar {
                             if width > 0 && height > 0 {
+                                let content_height = (height - swallow_top).max(1);
                                 // Ensure buffer is allocated
-                                titlebar.ensure_buffer(width, height, shm, qh, scale, ui);
+                                titlebar.ensure_buffer(width, content_height, shm, qh, scale, ui);
                                 if let Some(ref compositor) = state.globals.compositor {
                                     titlebar.update_input_region(compositor, qh, ui);
                                 }
@@ -743,7 +745,10 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                                 // Position decoration so it sits above content with borders
                                 let border_width = ui.border_width;
                                 let titlebar_height = rwm::titlebar::titlebar_height(ui);
-                                titlebar.set_offset(-border_width, -border_width - titlebar_height);
+                                titlebar.set_offset(
+                                    -border_width,
+                                    -border_width - titlebar_height + swallow_top,
+                                );
 
                                 // Sync and commit (only if we have a buffer)
                                 if did_render && titlebar.buffer.is_some() {
@@ -985,16 +990,46 @@ impl Dispatch<RiverWindowV1, rwm::WindowId> for AppState {
                 window.borrow_mut().update_dimensions(width, height);
             }
             Event::AppId { app_id } => {
-                window.borrow_mut().app_id = app_id;
+                let mut w = window.borrow_mut();
+                w.app_id = app_id;
+                state.context.borrow().apply_rules_to_window(&mut w);
             }
             Event::Title { title } => {
-                window.borrow_mut().title = title;
+                let mut w = window.borrow_mut();
+                w.title = title;
+                state.context.borrow().apply_rules_to_window(&mut w);
+            }
+            Event::Parent { parent } => {
+                let parent_id = parent.and_then(|parent_proxy| {
+                    let context = state.context.borrow();
+                    context.windows.iter().find_map(|(&id, w)| {
+                        if w.borrow()
+                            .rwm_window
+                            .as_ref()
+                            .map(|rw| rw == &parent_proxy)
+                            .unwrap_or(false)
+                        {
+                            Some(id)
+                        } else {
+                            None
+                        }
+                    })
+                });
+                {
+                    let mut w = window.borrow_mut();
+                    w.parent = parent_id;
+                    state.context.borrow().apply_rules_to_window(&mut w);
+                }
+                log::info!("Window {} parent set to {:?}", window_id, parent_id);
             }
             Event::DecorationHint {
                 hint: wayland_client::WEnum::Value(h),
             } => {
                 // Convert WEnum to u32
-                window.borrow_mut().decoration_hint = h as u32;
+                let hint = h as u32;
+                let mut w = window.borrow_mut();
+                w.decoration_hint = hint;
+                state.context.borrow().apply_rules_to_window(&mut w);
             }
             Event::UnreliablePid { unreliable_pid } => {
                 let mut w = window.borrow_mut();

@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 use crate::rule::Rule;
+use regex::Regex;
 use serde::de::{self, Deserializer};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -178,6 +179,27 @@ impl Default for Config {
 #[derive(Debug, Deserialize)]
 struct FileConfig {
     ui: Option<UiConfigFile>,
+    rules: Option<Vec<RuleFile>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum StringOrVec {
+    String(String),
+    Vec(Vec<String>),
+}
+
+#[derive(Debug, Deserialize)]
+struct RuleFile {
+    app_id: Option<StringOrVec>,
+    title: Option<StringOrVec>,
+    app_id_regex: Option<String>,
+    title_regex: Option<String>,
+    require_csd_only: Option<bool>,
+    require_no_parent: Option<bool>,
+    floating: Option<bool>,
+    decoration: Option<String>,
+    swallow_top: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -300,9 +322,62 @@ where
     }
 }
 
+fn string_or_vec(value: Option<StringOrVec>) -> Option<Vec<String>> {
+    match value {
+        Some(StringOrVec::String(s)) => Some(vec![s]),
+        Some(StringOrVec::Vec(values)) => Some(values),
+        None => None,
+    }
+}
+
+fn compile_regex(value: Option<String>, label: &str) -> Option<Regex> {
+    let pattern = value?;
+
+    match Regex::new(&pattern) {
+        Ok(regex) => Some(regex),
+        Err(err) => {
+            log::warn!("Invalid {} regex {:?}: {}", label, pattern, err);
+            None
+        }
+    }
+}
+
+fn parse_decoration(value: Option<String>) -> Option<WindowDecoration> {
+    let value = value?;
+
+    match value.to_lowercase().as_str() {
+        "csd" => Some(WindowDecoration::Csd),
+        "ssd" => Some(WindowDecoration::Ssd),
+        other => {
+            log::warn!(
+                "Unknown decoration value {:?}; expected \"csd\" or \"ssd\"",
+                other
+            );
+            None
+        }
+    }
+}
+
 fn config_path() -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     Some(home.join(".config").join("rwm").join("rwm.toml"))
+}
+
+fn rules_from_file(rules: Vec<RuleFile>) -> Vec<Rule> {
+    rules
+        .into_iter()
+        .map(|rule| Rule {
+            app_id: string_or_vec(rule.app_id),
+            title: string_or_vec(rule.title),
+            app_id_regex: compile_regex(rule.app_id_regex, "app_id"),
+            title_regex: compile_regex(rule.title_regex, "title"),
+            require_csd_only: rule.require_csd_only,
+            require_no_parent: rule.require_no_parent,
+            floating: rule.floating,
+            decoration: parse_decoration(rule.decoration),
+            swallow_top: rule.swallow_top,
+        })
+        .collect()
 }
 
 /// Load config from ~/.config/rwm/rwm.toml and apply overrides to defaults.
@@ -314,6 +389,9 @@ pub fn load_config() -> Config {
                 Ok(file_config) => {
                     if let Some(ui) = file_config.ui {
                         config.ui.apply(ui);
+                    }
+                    if let Some(rules) = file_config.rules {
+                        config.rules = rules_from_file(rules);
                     }
                 }
                 Err(err) => {
@@ -336,22 +414,22 @@ fn default_rules() -> Vec<Rule> {
             ..Default::default()
         },
         Rule {
-            app_id: Some("zenity".to_string()),
+            app_id: Some(vec!["zenity".to_string()]),
             floating: Some(true),
             ..Default::default()
         },
         Rule {
-            app_id: Some("DesktopEditors".to_string()),
+            app_id: Some(vec!["DesktopEditors".to_string()]),
             floating: Some(true),
             ..Default::default()
         },
         Rule {
-            app_id: Some("xdg-desktop-portal-gtk".to_string()),
+            app_id: Some(vec!["xdg-desktop-portal-gtk".to_string()]),
             floating: Some(true),
             ..Default::default()
         },
         Rule {
-            app_id: Some("chromium".to_string()),
+            app_id: Some(vec!["chromium".to_string()]),
             ..Default::default()
         },
     ]

@@ -9,6 +9,7 @@ use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fs;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::rc::Rc;
@@ -221,6 +222,8 @@ impl Context {
             &self.config.rules,
             window.app_id.as_deref(),
             window.title.as_deref(),
+            window.decoration_hint,
+            window.parent.is_some(),
         );
 
         if let Some(floating) = applied.floating {
@@ -229,6 +232,7 @@ impl Context {
         if let Some(decoration) = applied.decoration {
             window.decoration = Some(decoration);
         }
+        window.set_swallow_top(applied.swallow_top.unwrap_or(0));
     }
 
     /// Focus a window
@@ -244,6 +248,40 @@ impl Context {
                 seat.borrow().focus_window(&window.borrow());
             }
         }
+
+        if let Some(window) = self.windows.get(&window_id) {
+            let window = window.borrow();
+            self.log_focused_window_info(window_id, &window);
+        }
+    }
+
+    fn log_focused_window_info(&self, window_id: WindowId, window: &Window) {
+        let process_name = process_name_from_pid(window.pid);
+        let decoration_hint = decoration_hint_name(window.decoration_hint);
+
+        log::info!(
+            "Focused window {} info: app_id={:?}, title={:?}, pid={}, process={:?}, \
+decoration_hint={}({}), decoration={:?}, parent={:?}, swallow_top={}, size={}x{}, min={}x{}, \
+floating={}, maximized={}, fullscreen={:?}, hidden={}",
+            window_id,
+            window.app_id,
+            window.title,
+            window.pid,
+            process_name,
+            window.decoration_hint,
+            decoration_hint,
+            window.decoration,
+            window.parent,
+            window.swallow_top,
+            window.width,
+            window.height,
+            window.min_width,
+            window.min_height,
+            window.floating,
+            window.maximized,
+            window.fullscreen,
+            window.hidden
+        );
     }
 
     /// Focus the next/previous window
@@ -616,17 +654,25 @@ impl Context {
             (seat_ref.pointer_x, seat_ref.pointer_y)
         };
 
-        let (x, y, width, height, has_titlebar) = {
+        let (x, y, width, height, has_titlebar, swallow_top) = {
             let w = window.borrow();
-            (w.x, w.y, w.width, w.height, w.titlebar.is_some())
+            (
+                w.x,
+                w.y,
+                w.width,
+                w.height,
+                w.titlebar.is_some(),
+                w.swallow_top,
+            )
         };
 
         let border_width = self.config.ui.border_width;
         let titlebar_height = super::titlebar::titlebar_height(&self.config.ui);
+        let swallow_top = swallow_top.max(0);
         let frame_x = x - border_width;
-        let frame_y = y - border_width - titlebar_height;
+        let frame_y = y - border_width - titlebar_height + swallow_top;
         let frame_width = width + border_width * 2;
-        let frame_height = height + border_width * 2 + titlebar_height;
+        let frame_height = height + border_width * 2 + titlebar_height - swallow_top;
         let edges = calculate_resize_edges_near_border(
             frame_x,
             frame_y,
@@ -651,7 +697,7 @@ impl Context {
 
         if has_titlebar {
             let titlebar_origin_x = x;
-            let titlebar_origin_y = y - titlebar_height;
+            let titlebar_origin_y = y - titlebar_height + swallow_top;
             let local_x = px - titlebar_origin_x;
             let local_y = py - titlebar_origin_y;
 
@@ -675,7 +721,7 @@ impl Context {
             }
         }
 
-        if has_titlebar && point_in_titlebar(x, y, width, titlebar_height, px, py) {
+        if has_titlebar && point_in_titlebar(x, y + swallow_top, width, titlebar_height, px, py) {
             let mut w = window.borrow_mut();
             self.unmaximize_for_move(&mut w, px, py, false);
             w.floating = true;
@@ -767,10 +813,16 @@ impl Context {
         };
 
         let (ox, oy, ow, oh) = output.borrow().usable_area();
+        let swallow_top = self
+            .windows
+            .get(&window_id)
+            .map(|w| w.borrow().swallow_top)
+            .unwrap_or(0)
+            .max(0);
         let content_w = (ow - border_width * 2).max(1);
-        let content_h = (oh - border_width * 2 - titlebar_height).max(1);
+        let content_h = (oh - border_width * 2 - titlebar_height + swallow_top).max(1);
         let content_x = ox + border_width;
-        let content_y = oy + border_width + titlebar_height;
+        let content_y = oy + border_width + titlebar_height - swallow_top;
 
         if let Some(window) = self.windows.get(&window_id) {
             let mut w = window.borrow_mut();
@@ -800,10 +852,11 @@ impl Context {
         w.maximized = false;
 
         if let Some(saved) = saved {
+            let swallow_top = w.swallow_top.max(0);
             let cur_w = w.width.max(1);
             let cur_h = w.height.max(1);
             let rel_x = (pointer_x - w.x) as f32 / cur_w as f32;
-            let rel_y = (pointer_y - w.y) as f32 / cur_h as f32;
+            let rel_y = (pointer_y - (w.y - swallow_top)) as f32 / cur_h as f32;
             w.propose_dimensions(saved.width, saved.height);
             let new_x = pointer_x - (rel_x * saved.width as f32).round() as i32;
             let new_y = if adjust_y {
@@ -1028,6 +1081,15 @@ impl Context {
                 .unwrap_or(false);
             if unminimize_all {
                 visible = true;
+            }
+
+            let swallow_top = w.swallow_top;
+            if swallow_top > 0 && w.width > 0 && w.height > 0 {
+                let clip_w = w.width.max(1);
+                let clip_h = (w.height - swallow_top).max(1);
+                w.set_content_clip_box(0, swallow_top, clip_w, clip_h);
+            } else {
+                w.set_content_clip_box(0, 0, 0, 0);
             }
 
             log::debug!(
@@ -1451,4 +1513,23 @@ fn menu_item_from_window(
         hidden: window.hidden,
         active: focused == Some(window_id),
     }
+}
+
+fn decoration_hint_name(hint: u32) -> &'static str {
+    match hint {
+        0 => "only_supports_csd",
+        1 => "prefers_csd",
+        2 => "prefers_ssd",
+        3 => "no_preference",
+        _ => "unknown",
+    }
+}
+
+fn process_name_from_pid(pid: i32) -> Option<String> {
+    if pid <= 0 {
+        return None;
+    }
+
+    let path = format!("/proc/{}/comm", pid);
+    fs::read_to_string(path).ok().map(|s| s.trim().to_string())
 }

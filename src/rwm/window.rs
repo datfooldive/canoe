@@ -93,6 +93,10 @@ pub struct Window {
     pub app_id: Option<String>,
     /// Window title
     pub title: Option<String>,
+    /// Parent window (if any)
+    pub parent: Option<WindowId>,
+    /// Swallow top pixels from window content
+    pub swallow_top: i32,
 
     /// Position X
     pub x: i32,
@@ -159,6 +163,8 @@ impl Window {
             pid: 0,
             app_id: None,
             title: None,
+            parent: None,
+            swallow_top: 0,
             x: 0,
             y: 0,
             width: 0,
@@ -235,6 +241,11 @@ impl Window {
     pub fn update_dimensions(&mut self, width: i32, height: i32) {
         self.width = width;
         self.height = height;
+    }
+
+    /// Set the number of pixels to swallow from the top of the window
+    pub fn set_swallow_top(&mut self, swallow_top: i32) {
+        self.swallow_top = swallow_top.max(0);
     }
 
     /// Hide the window
@@ -356,6 +367,13 @@ impl Window {
         } else {
             ClipState::Normal
         };
+    }
+
+    /// Set clip box for content rendering (excludes decorations)
+    pub fn set_content_clip_box(&mut self, x: i32, y: i32, width: i32, height: i32) {
+        if let Some(ref rwm_window) = self.rwm_window {
+            rwm_window.set_content_clip_box(x, y, width, height);
+        }
     }
 
     /// Clear clip box
