@@ -42,6 +42,8 @@ main_modifier = "alt"
 | `Super+Up` | Maximize focused window |
 | `Super+h` | Minimize focused window |
 | `Super+m` | Minimize focused window |
+| `Super+Left` | Snap focused window to left half; restore if snapped right |
+| `Super+Right` | Snap focused window to right half; restore if snapped left |
 
 ## Mouse Actions
 

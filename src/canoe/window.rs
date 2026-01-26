@@ -23,6 +23,24 @@ pub enum FullscreenState {
     Output(Weak<RefCell<super::Output>>),
 }
 
+/// Window snap state
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapState {
+    Left,
+    Right,
+    Maximized,
+}
+
+impl SnapState {
+    pub fn opposite(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+            Self::Maximized => Self::Maximized,
+        }
+    }
+}
+
 /// Window clip state
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ClipState {
@@ -114,10 +132,12 @@ pub struct Window {
     pub fullscreen: FullscreenState,
     /// Maximized state
     pub maximized: bool,
-    /// Geometry to restore when unmaximizing
-    pub pre_maximize: Option<SavedGeometry>,
     /// Geometry to restore when exiting fullscreen
     pub pre_fullscreen: Option<SavedGeometry>,
+    /// Geometry to restore when unsnapping
+    pub pre_snap: Option<SavedGeometry>,
+    /// Current snap state
+    pub snap_state: Option<SnapState>,
     /// Restore geometry on the next manage sequence after exiting fullscreen
     pub pending_unfullscreen_restore: bool,
     /// Floating state
@@ -176,8 +196,9 @@ impl Window {
             min_height: 0,
             fullscreen: FullscreenState::None,
             maximized: false,
-            pre_maximize: None,
             pre_fullscreen: None,
+            pre_snap: None,
+            snap_state: None,
             pending_unfullscreen_restore: false,
             floating: false,
             hidden: false,
@@ -354,7 +375,6 @@ impl Window {
     pub fn clear_maximized_without_restore(&mut self) {
         if self.maximized {
             self.maximized = false;
-            self.pre_maximize = None;
             self.inform_unmaximized();
         }
     }
@@ -362,7 +382,8 @@ impl Window {
     pub fn unmaximize_restore_size_only(&mut self) {
         if self.maximized {
             self.maximized = false;
-            if let Some(saved) = self.pre_maximize.take() {
+            self.snap_state = None;
+            if let Some(saved) = self.pre_snap.take() {
                 self.propose_dimensions(saved.width, saved.height);
             }
             self.inform_unmaximized();

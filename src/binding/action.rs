@@ -11,6 +11,22 @@ pub enum Direction {
     Reverse,
 }
 
+/// Snap target side for window actions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapSide {
+    Left,
+    Right,
+}
+
+impl SnapSide {
+    pub fn opposite(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+        }
+    }
+}
+
 /// Window manager state for custom actions
 #[derive(Debug, Clone)]
 pub struct State {}
@@ -64,6 +80,8 @@ pub enum Action {
     HideFocused,
     /// Unfullscreen/unmaximize if needed, otherwise hide (minimize) the focused window
     SmartHideFocused,
+    /// Snap to a half; if on the opposite side, restore
+    SmartSnapHalf { side: SnapSide },
     /// Maximize the focused window to the output
     MaximizeFocused,
 
@@ -113,6 +131,24 @@ pub fn default_xkb_bindings(
             Keysym::Up.raw(),
             main,
             Action::MaximizeFocused,
+            super::BindingEvent::Pressed,
+        ),
+        (
+            Mode::Default,
+            Keysym::Left.raw(),
+            main,
+            Action::SmartSnapHalf {
+                side: SnapSide::Left,
+            },
+            super::BindingEvent::Pressed,
+        ),
+        (
+            Mode::Default,
+            Keysym::Right.raw(),
+            main,
+            Action::SmartSnapHalf {
+                side: SnapSide::Right,
+            },
             super::BindingEvent::Pressed,
         ),
         // Focus navigation (cycle through windows)

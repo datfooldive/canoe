@@ -418,6 +418,11 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
                     self.hide_window(window_id);
                 }
             }
+            Action::SmartSnapHalf { side } => {
+                if let Some(window_id) = self.focused_window {
+                    self.smart_snap_half(window_id, side);
+                }
+            }
             Action::MaximizeFocused => {
                 if let Some(window_id) = self.focused_window {
                     self.maximize_window(window_id);
@@ -623,6 +628,7 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
                         (seat_ref.pointer_x, seat_ref.pointer_y)
                     };
                     self.unmaximize_for_move(&mut w, px, py, true);
+                    w.snap_state = None;
                     w.floating = true; // Make floating if not already
                     w.start_move(Rc::downgrade(seat));
                     seat.borrow().start_pointer_op();
@@ -651,6 +657,7 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
                     let edges = {
                         let mut w = window.borrow_mut();
                         w.clear_maximized_without_restore();
+                        w.snap_state = None;
                         w.floating = true; // Make floating if not already
 
                         // Determine edges based on pointer position relative to window
@@ -860,14 +867,15 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
 
         if let Some(window) = self.windows.get(&window_id) {
             let mut w = window.borrow_mut();
-            if !w.maximized {
-                w.pre_maximize = Some(super::window::SavedGeometry {
+            if !w.maximized && w.pre_snap.is_none() {
+                w.pre_snap = Some(super::window::SavedGeometry {
                     x: w.x,
                     y: w.y,
                     width: w.width,
                     height: w.height,
                 });
             }
+            w.snap_state = Some(super::window::SnapState::Maximized);
             w.floating = true;
             w.set_position(content_x, content_y);
             w.propose_dimensions(content_w, content_h);
@@ -881,7 +889,7 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
             return;
         }
 
-        let saved = w.pre_maximize.take();
+        let saved = w.pre_snap.take();
         w.maximized = false;
 
         if let Some(saved) = saved {
@@ -907,12 +915,123 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
         if let Some(window) = self.windows.get(&window_id) {
             let mut w = window.borrow_mut();
             w.maximized = false;
-            if let Some(saved) = w.pre_maximize.take() {
+            if let Some(saved) = w.pre_snap.take() {
                 w.set_position(saved.x, saved.y);
                 w.propose_dimensions(saved.width, saved.height);
             }
+            w.snap_state = None;
             w.inform_unmaximized();
         }
+    }
+
+    fn smart_snap_half(&mut self, window_id: WindowId, side: crate::binding::action::SnapSide) {
+        use super::window::{FullscreenState, SnapState};
+
+        let border_width = self.config.ui.border_width;
+        let titlebar_height = super::titlebar::titlebar_height(&self.config.ui);
+
+        let output = self
+            .windows
+            .get(&window_id)
+            .and_then(|window| {
+                window
+                    .borrow()
+                    .output
+                    .as_ref()
+                    .and_then(|weak| weak.upgrade())
+            })
+            .or_else(|| {
+                self.current_output
+                    .and_then(|oid| self.outputs.get(&oid))
+                    .cloned()
+            });
+
+        let Some(output) = output else {
+            return;
+        };
+
+        let (ox, oy, ow, oh) = output.borrow().usable_area();
+        let swallow_top = self
+            .windows
+            .get(&window_id)
+            .map(|w| w.borrow().swallow_top)
+            .unwrap_or(0)
+            .max(0);
+
+        let (side_width, side_x) = {
+            let left_width = ow / 2;
+            match side {
+                crate::binding::action::SnapSide::Left => (left_width, ox),
+                crate::binding::action::SnapSide::Right => (ow - left_width, ox + left_width),
+            }
+        };
+
+        let content_w = (side_width - border_width * 2).max(1);
+        let content_h = (oh - border_width * 2 - titlebar_height + swallow_top).max(1);
+        let content_x = side_x + border_width;
+        let content_y = oy + border_width + titlebar_height - swallow_top;
+
+        let Some(window) = self.windows.get(&window_id) else {
+            return;
+        };
+
+        let mut w = window.borrow_mut();
+        let target_snap = match side {
+            crate::binding::action::SnapSide::Left => SnapState::Left,
+            crate::binding::action::SnapSide::Right => SnapState::Right,
+        };
+
+        if w.snap_state == Some(target_snap) {
+            return;
+        }
+
+        if w.snap_state == Some(target_snap.opposite()) {
+            if let Some(saved) = w.pre_snap.take() {
+                w.set_position(saved.x, saved.y);
+                w.propose_dimensions(saved.width, saved.height);
+            }
+            w.snap_state = None;
+            return;
+        }
+
+        if w.snap_state == Some(SnapState::Maximized) {
+            if let Some(saved) = w.pre_snap {
+                w.set_position(saved.x, saved.y);
+                w.propose_dimensions(saved.width, saved.height);
+            }
+            w.maximized = false;
+            w.inform_unmaximized();
+            w.snap_state = None;
+        }
+
+        if w.pre_snap.is_none() {
+            let saved = if !matches!(w.fullscreen, FullscreenState::None) {
+                w.pre_fullscreen
+            } else {
+                None
+            }
+            .unwrap_or(super::window::SavedGeometry {
+                x: w.x,
+                y: w.y,
+                width: w.width,
+                height: w.height,
+            });
+            w.pre_snap = Some(saved);
+        }
+
+        if !matches!(w.fullscreen, FullscreenState::None) {
+            w.exit_fullscreen();
+            w.pending_unfullscreen_restore = false;
+            if let Some(ref rwm) = self.rwm {
+                rwm.manage_dirty();
+            }
+        }
+
+        w.clear_maximized_without_restore();
+        w.floating = true;
+        w.set_position(content_x, content_y);
+        w.propose_dimensions(content_w, content_h);
+        w.snap_state = Some(target_snap);
     }
 
     /// Toggle fullscreen for focused window
