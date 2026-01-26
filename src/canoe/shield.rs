@@ -85,21 +85,18 @@ impl ShieldSurface {
             .create("canoe-shield")
         {
             Ok(fd) => fd,
-            Err(e) => {
-                log::error!("Failed to create shield memfd: {}", e);
+            Err(_) => {
                 return;
             }
         };
 
-        if let Err(e) = memfd.as_file().set_len(size as u64) {
-            log::error!("Failed to size shield memfd: {}", e);
+        if memfd.as_file().set_len(size as u64).is_err() {
             return;
         }
 
         let mmap = match unsafe { memmap2::MmapMut::map_mut(memfd.as_file()) } {
             Ok(m) => m,
-            Err(e) => {
-                log::error!("Failed to mmap shield buffer: {}", e);
+            Err(_) => {
                 return;
             }
         };

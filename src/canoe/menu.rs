@@ -223,21 +223,18 @@ impl WindowMenu {
             .create("canoe-menu")
         {
             Ok(fd) => fd,
-            Err(e) => {
-                log::error!("Failed to create menu memfd: {}", e);
+            Err(_) => {
                 return;
             }
         };
 
-        if let Err(e) = memfd.as_file().set_len(size as u64) {
-            log::error!("Failed to size menu memfd: {}", e);
+        if memfd.as_file().set_len(size as u64).is_err() {
             return;
         }
 
         let mmap = match unsafe { memmap2::MmapMut::map_mut(memfd.as_file()) } {
             Ok(m) => m,
-            Err(e) => {
-                log::error!("Failed to mmap menu buffer: {}", e);
+            Err(_) => {
                 return;
             }
         };

@@ -321,15 +321,6 @@ impl Window {
     /// Set window borders
     pub fn set_borders(&self, edges: Edges, width: i32, r: u32, g: u32, b: u32, a: u32) {
         if let Some(ref rwm_window) = self.rwm_window {
-            log::debug!(
-                "set_borders: edges={:?} width={} rgba=({},{},{},{})",
-                edges,
-                width,
-                r,
-                g,
-                b,
-                a
-            );
             rwm_window.set_borders(edges, width, r, g, b, a);
         }
     }

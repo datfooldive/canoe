@@ -289,7 +289,6 @@ impl Titlebar {
             + wayland_client::Dispatch<wl_buffer::WlBuffer, ()>,
     {
         if content_width <= 0 || content_height <= 0 {
-            log::info!("ensure_buffer: invalid content size, skipping");
             return;
         }
 
@@ -300,7 +299,6 @@ impl Titlebar {
         let buffer_width = width * scale;
         let buffer_height = height * scale;
         if buffer_width <= 0 || buffer_height <= 0 {
-            log::info!("ensure_buffer: invalid buffer size, skipping");
             return;
         }
 
@@ -312,13 +310,6 @@ impl Titlebar {
             || self.scale != scale
             || self.buffer.is_none()
         {
-            log::info!(
-                "ensure_buffer: creating new buffer for {}x{} (content {}x{})",
-                width,
-                height,
-                content_width,
-                content_height
-            );
             self.width = width;
             self.height = height;
             self.buffer_width = buffer_width;
@@ -343,7 +334,6 @@ impl Titlebar {
             // Calculate buffer size (ARGB8888 = 4 bytes per pixel)
             let stride = buffer_width * 4;
             let size = stride * buffer_height;
-            log::debug!("ensure_buffer: stride={}, size={}", stride, size);
 
             // Create memfd for shared memory
             let memfd = match memfd::MemfdOptions::default()
@@ -351,23 +341,20 @@ impl Titlebar {
                 .create("canoe-titlebar")
             {
                 Ok(fd) => fd,
-                Err(e) => {
-                    log::error!("Failed to create memfd: {}", e);
+                Err(_) => {
                     return;
                 }
             };
 
             // Set size
-            if let Err(e) = memfd.as_file().set_len(size as u64) {
-                log::error!("Failed to set memfd size: {}", e);
+            if memfd.as_file().set_len(size as u64).is_err() {
                 return;
             }
 
             // Create mmap
             let mmap = match unsafe { memmap2::MmapMut::map_mut(memfd.as_file()) } {
                 Ok(m) => m,
-                Err(e) => {
-                    log::error!("Failed to mmap: {}", e);
+                Err(_) => {
                     return;
                 }
             };
@@ -385,8 +372,6 @@ impl Titlebar {
                 qh,
                 (),
             );
-
-            log::debug!("ensure_buffer: buffer created successfully");
 
             // Store everything
             self.memfile = Some(memfd.into_file());

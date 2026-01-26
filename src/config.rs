@@ -348,16 +348,10 @@ fn string_or_vec(value: Option<StringOrVec>) -> Option<Vec<String>> {
     }
 }
 
-fn compile_regex(value: Option<String>, label: &str) -> Option<Regex> {
+fn compile_regex(value: Option<String>) -> Option<Regex> {
     let pattern = value?;
 
-    match Regex::new(&pattern) {
-        Ok(regex) => Some(regex),
-        Err(err) => {
-            log::warn!("Invalid {} regex {:?}: {}", label, pattern, err);
-            None
-        }
-    }
+    Regex::new(&pattern).ok()
 }
 
 fn parse_decoration(value: Option<String>) -> Option<WindowDecoration> {
@@ -366,13 +360,7 @@ fn parse_decoration(value: Option<String>) -> Option<WindowDecoration> {
     match value.to_lowercase().as_str() {
         "csd" => Some(WindowDecoration::Csd),
         "ssd" => Some(WindowDecoration::Ssd),
-        other => {
-            log::warn!(
-                "Unknown decoration value {:?}; expected \"csd\" or \"ssd\"",
-                other
-            );
-            None
-        }
+        _ => None,
     }
 }
 
@@ -387,8 +375,8 @@ fn rules_from_file(rules: Vec<RuleFile>) -> Vec<Rule> {
         .map(|rule| Rule {
             app_id: string_or_vec(rule.app_id),
             title: string_or_vec(rule.title),
-            app_id_regex: compile_regex(rule.app_id_regex, "app_id"),
-            title_regex: compile_regex(rule.title_regex, "title"),
+            app_id_regex: compile_regex(rule.app_id_regex),
+            title_regex: compile_regex(rule.title_regex),
             require_csd_only: rule.require_csd_only,
             require_no_parent: rule.require_no_parent,
             decoration: parse_decoration(rule.decoration),
@@ -402,20 +390,15 @@ pub fn load_config() -> Config {
     let mut config = Config::default();
     if let Some(path) = config_path() {
         if let Ok(contents) = std::fs::read_to_string(&path) {
-            match toml::from_str::<FileConfig>(&contents) {
-                Ok(file_config) => {
-                    if let Some(main_modifier) = file_config.main_modifier {
-                        config.main_modifier = main_modifier;
-                    }
-                    if let Some(ui) = file_config.ui {
-                        config.ui.apply(ui);
-                    }
-                    if let Some(rules) = file_config.rules {
-                        config.rules = rules_from_file(rules);
-                    }
+            if let Ok(file_config) = toml::from_str::<FileConfig>(&contents) {
+                if let Some(main_modifier) = file_config.main_modifier {
+                    config.main_modifier = main_modifier;
                 }
-                Err(err) => {
-                    log::warn!("Failed to parse config {}: {}", path.display(), err);
+                if let Some(ui) = file_config.ui {
+                    config.ui.apply(ui);
+                }
+                if let Some(rules) = file_config.rules {
+                    config.rules = rules_from_file(rules);
                 }
             }
         }

@@ -648,13 +648,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
         {
             match interface.as_str() {
                 "wl_compositor" => {
-                    log::info!("Binding wl_compositor v{}", version.min(4));
                     let compositor: wl_compositor::WlCompositor =
                         registry.bind(name, version.min(4), qh, ());
                     state.globals.compositor = Some(compositor);
                 }
                 "wl_shm" => {
-                    log::info!("Binding wl_shm v{}", version.min(1));
                     let shm: wl_shm::WlShm = registry.bind(name, version.min(1), qh, ());
                     state.globals.shm = Some(shm);
                 }
@@ -688,7 +686,6 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
                     }
                 }
                 "wl_seat" => {
-                    log::info!("Binding wl_seat v{}", version.min(7));
                     let seat: wl_seat::WlSeat = registry.bind(name, version.min(7), qh, name);
                     state.globals.wl_seats.insert(name, seat);
                     state.globals.wl_seat_has_pointer.insert(name, false);
@@ -717,7 +714,6 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
                     state.context.borrow_mut().rwm_layer_shell = Some(ls);
                 }
                 "zwlr_layer_shell_v1" => {
-                    log::info!("Binding zwlr_layer_shell_v1 v{}", version.min(4));
                     let layer_shell: ZwlrLayerShellV1 = registry.bind(name, version.min(4), qh, ());
                     state.globals.wlr_layer_shell = Some(layer_shell);
                     let outputs: Vec<_> = state.context.borrow().outputs.keys().copied().collect();
@@ -736,7 +732,6 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
                     state.context.borrow_mut().rwm_libinput_config = Some(lc);
                 }
                 "wp_cursor_shape_manager_v1" => {
-                    log::info!("Binding wp_cursor_shape_manager_v1 v{}", version.min(2));
                     let manager: WpCursorShapeManagerV1 =
                         registry.bind(name, version.min(2), qh, ());
                     state.globals.cursor_shape_manager = Some(manager);
@@ -778,11 +773,9 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
 
         match event {
             Event::Unavailable => {
-                log::error!("Window management unavailable - another WM may be running");
                 state.context.borrow_mut().running = false;
             }
             Event::Finished => {
-                log::info!("Window manager finished");
                 state.context.borrow_mut().running = false;
             }
             Event::ManageStart => {
@@ -888,8 +881,6 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
 
                 // Create titlebar if compositor is available
                 if let Some(ref compositor) = state.globals.compositor {
-                    log::info!("Creating titlebar surface for window {}", window_id);
-
                     // Create surface for titlebar
                     let surface = compositor.create_surface(qh, TitlebarSurfaceData { window_id });
 
@@ -900,13 +891,6 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                     // Create titlebar
                     let titlebar = canoe::Titlebar::new(surface, decoration);
                     window.borrow_mut().titlebar = Some(titlebar);
-
-                    log::info!("Created titlebar for window {}", window_id);
-                } else {
-                    log::warn!(
-                        "No compositor available, cannot create titlebar for window {}",
-                        window_id
-                    );
                 }
 
                 // Queue init event
@@ -935,11 +919,6 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                 // Register XKB bindings with the compositor
                 if let Some(ref xkb_bindings_global) = state.globals.rwm_xkb_bindings {
                     let mut seat_ref = seat.borrow_mut();
-                    log::info!(
-                        "Registering {} XKB bindings for seat {}",
-                        seat_ref.xkb_bindings.len(),
-                        seat_id
-                    );
 
                     for (idx, (binding, rwm_binding_slot)) in
                         seat_ref.xkb_bindings.iter_mut().enumerate()
@@ -959,12 +938,6 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                         // Enable binding if it's for the current mode
                         if binding.enabled {
                             rwm_binding.enable();
-                            log::debug!(
-                                "Enabled binding {} (keysym: {:#x}, mods: {:#x})",
-                                idx,
-                                binding.keysym,
-                                binding.modifiers
-                            );
                         }
 
                         *rwm_binding_slot = Some(rwm_binding);
@@ -976,12 +949,6 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                     let mut seat_ref = seat.borrow_mut();
                     let rwm_seat = seat_ref.rwm_seat.clone();
                     if let Some(rwm_seat) = rwm_seat {
-                        log::info!(
-                            "Registering {} pointer bindings for seat {}",
-                            seat_ref.pointer_bindings.len(),
-                            seat_id
-                        );
-
                         for (idx, (binding, rwm_binding_slot)) in
                             seat_ref.pointer_bindings.iter_mut().enumerate()
                         {
@@ -1081,28 +1048,14 @@ impl Dispatch<RiverWindowV1, canoe::WindowId> for AppState {
             Event::DimensionsHint {
                 min_width,
                 min_height,
-                max_width,
-                max_height,
+                max_width: _,
+                max_height: _,
             } => {
-                log::info!(
-                    "Window {} DimensionsHint: min={}x{}, max={}x{}",
-                    window_id,
-                    min_width,
-                    min_height,
-                    max_width,
-                    max_height
-                );
                 let mut w = window.borrow_mut();
                 w.min_width = min_width;
                 w.min_height = min_height;
             }
             Event::Dimensions { width, height } => {
-                log::info!(
-                    "Window {} received Dimensions event: {}x{}",
-                    window_id,
-                    width,
-                    height
-                );
                 window.borrow_mut().update_dimensions(width, height);
             }
             Event::AppId { app_id } => {
@@ -1136,7 +1089,6 @@ impl Dispatch<RiverWindowV1, canoe::WindowId> for AppState {
                     w.parent = parent_id;
                     state.context.borrow().apply_rules_to_window(&mut w);
                 }
-                log::info!("Window {} parent set to {:?}", window_id, parent_id);
             }
             Event::DecorationHint {
                 hint: wayland_client::WEnum::Value(h),
@@ -1382,7 +1334,6 @@ impl Dispatch<RiverSeatV1, canoe::SeatId> for AppState {
                 }) {
                     drop(context);
                     state.context.borrow_mut().close_window_menu();
-                    log::debug!("Window interaction - focusing window {}", wid);
                     let mut context = state.context.borrow_mut();
                     context.focus(wid);
                     context.handle_window_interaction(*seat_id, wid);
@@ -1642,13 +1593,6 @@ impl Dispatch<RiverXkbBindingV1, (canoe::SeatId, usize)> for AppState {
     ) {
         use river_xkb_bindings_v1::client::river_xkb_binding_v1::Event;
 
-        log::debug!(
-            "XKB binding event: seat={}, binding_idx={}, event={:?}",
-            seat_id,
-            binding_idx,
-            event
-        );
-
         let seat = match state.context.borrow().seats.get(seat_id) {
             Some(seat) => seat.clone(),
             None => return,
@@ -1659,13 +1603,6 @@ impl Dispatch<RiverXkbBindingV1, (canoe::SeatId, usize)> for AppState {
                 return;
             };
             let action = binding.action.clone();
-            log::info!(
-                "Binding triggered: keysym={:#x}, mods={:#x}, enabled={}, action={:?}",
-                binding.keysym,
-                binding.modifiers,
-                binding.enabled,
-                action
-            );
             (action, binding.event, binding.enabled)
         };
 
@@ -2489,11 +2426,6 @@ impl Dispatch<RiverDecorationV1, canoe::WindowId> for AppState {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-
-    log::info!("Canoe - River Window Manager starting");
-
     // Connect to Wayland display
     let conn = Connection::connect_to_env()?;
     let display = conn.display();
@@ -2517,7 +2449,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Check required globals
     if state.globals.rwm.is_none() {
-        log::error!("river_window_manager_v1 not available - is River running?");
         return Err("River window manager protocol not available".into());
     }
 
@@ -2535,8 +2466,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for cmd in &state.context.borrow().config.startup_cmds.clone() {
         state.context.borrow().spawn(cmd);
     }
-
-    log::info!("Canoe initialized, entering main loop");
 
     // Main event loop
     while state.context.borrow().running {
@@ -2587,7 +2516,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(Some(sig_info)) = signal_fd.read_signal() {
                 match Signal::try_from(sig_info.ssi_signo as i32) {
                     Ok(Signal::SIGINT) | Ok(Signal::SIGTERM) | Ok(Signal::SIGQUIT) => {
-                        log::info!("Received termination signal, shutting down");
                         state.context.borrow_mut().running = false;
                     }
                     Ok(Signal::SIGCHLD) => {
@@ -2609,6 +2537,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    log::info!("Canoe shutting down");
     Ok(())
 }

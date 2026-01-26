@@ -9,7 +9,6 @@ use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fs;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::rc::Rc;
@@ -263,11 +262,6 @@ impl Context {
                 seat.borrow().focus_window(&window.borrow());
             }
         }
-
-        if let Some(window) = self.windows.get(&window_id) {
-            let window = window.borrow();
-            self.log_focused_window_info(window_id, &window);
-        }
     }
 
     fn focus_preview(&mut self, window_id: WindowId) {
@@ -278,40 +272,6 @@ impl Context {
                 seat.borrow().focus_window(&window.borrow());
             }
         }
-
-        if let Some(window) = self.windows.get(&window_id) {
-            let window = window.borrow();
-            self.log_focused_window_info(window_id, &window);
-        }
-    }
-
-    fn log_focused_window_info(&self, window_id: WindowId, window: &Window) {
-        let process_name = process_name_from_pid(window.pid);
-        let decoration_hint = decoration_hint_name(window.decoration_hint);
-
-        log::info!(
-            "Focused window {} info: app_id={:?}, title={:?}, pid={}, process={:?}, \
-decoration_hint={}({}), decoration={:?}, parent={:?}, swallow_top={}, size={}x{}, min={}x{}, \
-floating={}, maximized={}, fullscreen={:?}, hidden={}",
-            window_id,
-            window.app_id,
-            window.title,
-            window.pid,
-            process_name,
-            window.decoration_hint,
-            decoration_hint,
-            window.decoration,
-            window.parent,
-            window.swallow_top,
-            window.width,
-            window.height,
-            window.min_width,
-            window.min_height,
-            window.floating,
-            window.maximized,
-            window.fullscreen,
-            window.hidden
-        );
     }
 
     /// Focus the next/previous window
@@ -501,8 +461,6 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
             return;
         }
 
-        log::info!("Spawning command: {:?}", argv);
-
         match unsafe { nix::unistd::fork() } {
             Ok(nix::unistd::ForkResult::Parent { .. }) => {
                 // Parent continues
@@ -533,9 +491,7 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
                 eprintln!("Failed to exec {:?}: {:?}", argv, err);
                 std::process::exit(1);
             }
-            Err(e) => {
-                log::error!("Failed to fork for spawn {:?}: {}", argv, e);
-            }
+            Err(_) => (),
         }
     }
 
@@ -1182,7 +1138,6 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
 
                     // Apply decoration preference (if any)
                     if let Some(decoration) = w.decoration {
-                        log::info!("Window {} setting decoration: {:?}", window_id, decoration);
                         w.set_decoration(decoration);
                     }
 
@@ -1202,18 +1157,11 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
                             }
                         })
                         .unwrap_or((800, 600));
-                    log::info!(
-                        "Window {} init - proposing default dimensions {}x{}",
-                        window_id,
-                        default_width,
-                        default_height
-                    );
                     w.propose_dimensions(default_width, default_height);
                 }
 
                 // Focus the new window
                 self.focus(window_id);
-                log::info!("Window {} initialized and focused", window_id);
             }
             WindowEvent::Close => {
                 if let Some(window) = self.windows.get(&window_id) {
@@ -1281,16 +1229,6 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
 
     /// Handle render_start event - position windows and set borders
     pub fn handle_render_start(&mut self) {
-        let border_width = self.config.ui.border_width;
-
-        log::debug!(
-            "render_start: {} windows, {} outputs, current_output={:?}, border_width={}",
-            self.windows.len(),
-            self.outputs.len(),
-            self.current_output,
-            border_width
-        );
-
         self.apply_initial_positions();
         let unminimize_all = !self.startup_unminimize_done;
         if unminimize_all {
@@ -1321,13 +1259,6 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
             } else {
                 w.set_content_clip_box(0, 0, 0, 0);
             }
-
-            log::debug!(
-                "Window {} visible={} hidden={}",
-                window_id,
-                visible,
-                w.hidden
-            );
 
             if visible {
                 w.show();
@@ -1825,23 +1756,4 @@ fn menu_item_from_window(
         hidden: window.hidden,
         active: focused == Some(window_id),
     }
-}
-
-fn decoration_hint_name(hint: u32) -> &'static str {
-    match hint {
-        0 => "only_supports_csd",
-        1 => "prefers_csd",
-        2 => "prefers_ssd",
-        3 => "no_preference",
-        _ => "unknown",
-    }
-}
-
-fn process_name_from_pid(pid: i32) -> Option<String> {
-    if pid <= 0 {
-        return None;
-    }
-
-    let path = format!("/proc/{}/comm", pid);
-    fs::read_to_string(path).ok().map(|s| s.trim().to_string())
 }
