@@ -165,17 +165,28 @@ impl FaceHandle {
                 return None;
             }
             let bitmap = &(*glyph).bitmap;
-            if bitmap.buffer.is_null() {
-                return None;
-            }
-            if bitmap.pixel_mode != ft::FT_Pixel_Mode::FT_PIXEL_MODE_GRAY as u8 {
-                return None;
-            }
             let pitch = bitmap.pitch;
             let rows = bitmap.rows as i32;
             let width = bitmap.width as i32;
             let abs_pitch = pitch.unsigned_abs() as usize;
             let len = abs_pitch.saturating_mul(rows.max(0) as usize);
+            if width == 0 || rows == 0 || len == 0 {
+                return Some(GlyphBitmap {
+                    width,
+                    rows,
+                    pitch,
+                    buffer: &[],
+                    left: (*glyph).bitmap_left,
+                    top: (*glyph).bitmap_top,
+                    advance: ((*glyph).advance.x >> 6) as i32,
+                });
+            }
+            if bitmap.pixel_mode != ft::FT_Pixel_Mode::FT_PIXEL_MODE_GRAY as u8 {
+                return None;
+            }
+            if bitmap.buffer.is_null() {
+                return None;
+            }
             let buffer = std::slice::from_raw_parts(bitmap.buffer, len);
 
             Some(GlyphBitmap {

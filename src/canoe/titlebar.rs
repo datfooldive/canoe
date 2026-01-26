@@ -22,9 +22,6 @@ const BUTTON_BG_PRESSED_LEFT: u32 = 0xA0A0A0FF;
 const BORDER_OUTER: i32 = 1;
 const BORDER_INNER: i32 = 1;
 
-/// Horizontal padding for title text
-const TITLE_PADDING: i32 = 8;
-
 const BUTTON_PADDING_X: i32 = 0;
 const BUTTON_GAP: i32 = 1;
 
@@ -924,7 +921,9 @@ impl Titlebar {
                     if !title_str.is_empty() {
                         let text_start =
                             (buttons.close.x + buttons.close.width + BUTTON_GAP).max(0);
-                        let text_end = (buttons.maximize.x - BUTTON_GAP).min(content_width);
+                        let text_padding = (ui.font_size * 0.5).round().max(0.0) as i32;
+                        let text_end =
+                            (buttons.hide.x - BUTTON_GAP - text_padding).min(content_width);
                         let text_width = (text_end - text_start).max(0);
                         if text_width > 0 {
                             let text_color = if is_active {
@@ -943,7 +942,7 @@ impl Titlebar {
                                 text_argb,
                                 ui.font_size,
                                 ui.font_name.as_deref(),
-                                TITLE_PADDING * scale,
+                                text_padding * scale,
                             );
                         }
                     }
