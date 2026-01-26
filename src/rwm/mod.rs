@@ -2,6 +2,7 @@
 
 mod context;
 mod desktop;
+mod font;
 mod menu;
 mod output;
 mod seat;

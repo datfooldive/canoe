@@ -1,19 +1,16 @@
 //! Window menu rendering and interaction.
 
 use crate::config::UiConfig;
-use fontdue::{Font, FontSettings};
 use memmap2::MmapMut;
 use std::fs::File;
 use std::os::fd::AsFd;
-use std::path::Path;
-use std::sync::OnceLock;
 use wayland_client::protocol::{
     wl_buffer, wl_compositor, wl_region, wl_shm, wl_shm_pool, wl_surface,
 };
 use wayland_client::QueueHandle;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1;
 
-use super::{OutputId, WindowId};
+use super::{font, OutputId, WindowId};
 
 /// Menu entry data.
 #[derive(Debug, Clone)]
@@ -436,21 +433,22 @@ fn item_height(theme: &MenuTheme) -> i32 {
 }
 
 fn measure_menu(items: &[MenuItem], theme: &MenuTheme) -> (i32, i32) {
-    let font = match get_font(theme.font_name.as_deref()) {
-        Some(f) => f,
-        None => {
-            let menu_w = 120;
-            let menu_h = (items.len() as i32 * item_height(theme)).max(1) + MENU_BORDER * 2;
-            return (menu_w + SHADOW_SIZE, menu_h + SHADOW_SIZE);
-        }
-    };
-
     let mut max_width = 0.0f32;
+    let mut has_font = false;
     for item in items {
-        let w = measure_text(font, &item.title, theme.font_size);
-        if w > max_width {
-            max_width = w;
+        if let Some(width) =
+            font::measure_text(theme.font_name.as_deref(), theme.font_size, &item.title)
+        {
+            has_font = true;
+            if width > max_width {
+                max_width = width;
+            }
         }
+    }
+    if !has_font {
+        let menu_w = 120;
+        let menu_h = (items.len() as i32 * item_height(theme)).max(1) + MENU_BORDER * 2;
+        return (menu_w + SHADOW_SIZE, menu_h + SHADOW_SIZE);
     }
 
     let content_w = ITEM_PADDING_X * 2 + ICON_SIZE + ICON_GAP + max_width.ceil() as i32;
@@ -458,61 +456,6 @@ fn measure_menu(items: &[MenuItem], theme: &MenuTheme) -> (i32, i32) {
     let menu_w = content_w + MENU_BORDER * 2;
     let menu_h = content_h + MENU_BORDER * 2;
     (menu_w + SHADOW_SIZE, menu_h + SHADOW_SIZE)
-}
-
-fn measure_text(font: &Font, text: &str, font_size: f32) -> f32 {
-    text.chars()
-        .map(|ch| font.metrics(ch, font_size).advance_width)
-        .sum()
-}
-
-fn get_font(font_name: Option<&str>) -> Option<&'static Font> {
-    static FONT: OnceLock<Option<Font>> = OnceLock::new();
-    let requested = font_name.map(|name| name.to_string());
-
-    FONT.get_or_init(|| {
-        let font_paths = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/TTF/DejaVuSans.ttf",
-            "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-            "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
-        ];
-
-        if let Some(name) = requested.as_deref() {
-            let path = Path::new(name);
-            if path.is_file() {
-                if let Ok(font_data) = std::fs::read(path) {
-                    if let Ok(font) = Font::from_bytes(font_data, FontSettings::default()) {
-                        return Some(font);
-                    }
-                }
-            } else {
-                for candidate in font_paths {
-                    if Path::new(candidate).file_name().and_then(|n| n.to_str()) == Some(name) {
-                        if let Ok(font_data) = std::fs::read(candidate) {
-                            if let Ok(font) = Font::from_bytes(font_data, FontSettings::default()) {
-                                return Some(font);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        for path in font_paths {
-            if let Ok(font_data) = std::fs::read(path) {
-                if let Ok(font) = Font::from_bytes(font_data, FontSettings::default()) {
-                    return Some(font);
-                }
-            }
-        }
-        None
-    })
-    .as_ref()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -529,61 +472,78 @@ fn render_text(
     scale: i32,
     theme: &MenuTheme,
 ) {
-    let font = match get_font(theme.font_name.as_deref()) {
-        Some(f) => f,
-        None => return,
-    };
+    let size_px = (theme.font_size * scale.max(1) as f32).round().max(1.0) as u32;
 
-    let font_size = theme.font_size * scale.max(1) as f32;
-    let baseline_y = if let Some(line_metrics) = font.horizontal_line_metrics(font_size) {
-        let line_height = line_metrics.ascent - line_metrics.descent;
-        origin_y as f32 + (area_height as f32 - line_height) / 2.0 + line_metrics.ascent
-    } else {
-        let metrics = font.metrics('A', font_size);
-        origin_y as f32
-            + (area_height as f32 - metrics.height as f32) / 2.0
-            + (metrics.ymin as f32 + metrics.height as f32)
-    };
+    let _ = font::with_face(theme.font_name.as_deref(), size_px, |face| {
+        let metrics = match face.line_metrics() {
+            Some(metrics) => metrics,
+            None => return,
+        };
 
-    let mut x_pos = origin_x as f32;
-    let max_x = origin_x + area_width;
+        let line_height = (metrics.ascender - metrics.descender).max(1);
+        let baseline_y = origin_y + (area_height - line_height) / 2 + metrics.ascender;
 
-    for ch in text.chars() {
-        let (metrics, bitmap) = font.rasterize(ch, font_size);
-        if (x_pos + metrics.advance_width) as i32 > max_x {
-            break;
-        }
+        let mut x_pos = origin_x;
+        let max_x = origin_x + area_width;
 
-        let glyph_x = x_pos as i32 + metrics.xmin;
-        let glyph_y = baseline_y as i32 - (metrics.ymin + metrics.height as i32);
+        for ch in text.chars() {
+            let glyph = match face.load_char(ch) {
+                Some(glyph) => glyph,
+                None => continue,
+            };
+            let advance = glyph.advance;
+            if x_pos + advance > max_x {
+                break;
+            }
 
-        for row in 0..metrics.height {
-            for col in 0..metrics.width {
-                let px = glyph_x + col as i32;
-                let py = glyph_y + row as i32;
-                if px < origin_x
-                    || px >= origin_x + area_width
-                    || py < origin_y
-                    || py >= origin_y + area_height
-                    || px < 0
-                    || py < 0
-                    || px >= buffer_width
-                    || py >= buffer_height
-                {
-                    continue;
-                }
-                let alpha = bitmap[row * metrics.width + col];
-                if alpha > 0 {
-                    let offset = ((py * buffer_width + px) * 4) as usize;
-                    if offset + 4 <= pixels.len() {
-                        blend_pixel(&mut pixels[offset..offset + 4], text_argb, alpha);
+            let width = glyph.width;
+            let rows = glyph.rows;
+            if width <= 0 || rows <= 0 {
+                x_pos += advance;
+                continue;
+            }
+            let pitch = glyph.pitch;
+            let abs_pitch = pitch.abs();
+            let glyph_x = x_pos + glyph.left;
+            let glyph_y = baseline_y - glyph.top;
+
+            for row in 0..rows {
+                let row_offset = if pitch < 0 {
+                    (rows - 1 - row) * abs_pitch
+                } else {
+                    row * abs_pitch
+                } as usize;
+                for col in 0..width {
+                    let px = glyph_x + col;
+                    let py = glyph_y + row;
+                    if px < origin_x
+                        || px >= origin_x + area_width
+                        || py < origin_y
+                        || py >= origin_y + area_height
+                        || px < 0
+                        || py < 0
+                        || px >= buffer_width
+                        || py >= buffer_height
+                    {
+                        continue;
+                    }
+                    let idx = row_offset + col as usize;
+                    if idx >= glyph.buffer.len() {
+                        continue;
+                    }
+                    let alpha = glyph.buffer[idx];
+                    if alpha > 0 {
+                        let offset = ((py * buffer_width + px) * 4) as usize;
+                        if offset + 4 <= pixels.len() {
+                            blend_pixel(&mut pixels[offset..offset + 4], text_argb, alpha);
+                        }
                     }
                 }
             }
-        }
 
-        x_pos += metrics.advance_width;
-    }
+            x_pos += advance;
+        }
+    });
 }
 
 fn rgba_to_argb(rgba: u32) -> u32 {

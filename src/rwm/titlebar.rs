@@ -1,12 +1,10 @@
 //! Titlebar rendering for windows
 
+use super::font;
 use crate::config::UiConfig;
 use crate::protocol::RiverDecorationV1;
-use fontdue::{Font, FontSettings};
 use resvg::{tiny_skia, usvg};
 use std::os::fd::AsFd;
-use std::path::Path;
-use std::sync::OnceLock;
 use wayland_client::protocol::{
     wl_buffer, wl_compositor, wl_region, wl_shm, wl_shm_pool, wl_surface,
 };
@@ -149,62 +147,6 @@ pub fn button_at(
     }
 
     None
-}
-
-/// Get or initialize the titlebar font
-fn get_font(font_name: Option<&str>) -> Option<&'static Font> {
-    static FONT: OnceLock<Option<Font>> = OnceLock::new();
-    let requested = font_name.map(|name| name.to_string());
-    FONT.get_or_init(|| {
-        // Try common system font paths
-        let font_paths = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/TTF/DejaVuSans.ttf",
-            "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-            "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
-        ];
-
-        if let Some(name) = requested.as_deref() {
-            let path = Path::new(name);
-            if path.is_file() {
-                if let Ok(font_data) = std::fs::read(path) {
-                    if let Ok(font) = Font::from_bytes(font_data, FontSettings::default()) {
-                        log::info!("Loaded titlebar font from {}", path.display());
-                        return Some(font);
-                    }
-                }
-            } else {
-                for candidate in font_paths {
-                    if Path::new(candidate).file_name().and_then(|n| n.to_str()) == Some(name) {
-                        if let Ok(font_data) = std::fs::read(candidate) {
-                            if let Ok(font) = Font::from_bytes(font_data, FontSettings::default()) {
-                                log::info!("Loaded titlebar font from {}", candidate);
-                                return Some(font);
-                            }
-                        }
-                    }
-                }
-            }
-            log::warn!("Requested titlebar font {} not found, falling back", name);
-        }
-
-        for path in font_paths {
-            if let Ok(font_data) = std::fs::read(path) {
-                if let Ok(font) = Font::from_bytes(font_data, FontSettings::default()) {
-                    log::info!("Loaded titlebar font from {}", path);
-                    return Some(font);
-                }
-            }
-        }
-
-        log::warn!("Could not load any system font for titlebar");
-        None
-    })
-    .as_ref()
 }
 
 /// Titlebar state for a window
@@ -789,83 +731,81 @@ fn render_title(
     font_size: f32,
     font_name: Option<&str>,
 ) {
-    let font = match get_font(font_name) {
-        Some(f) => f,
-        None => return,
-    };
-
     let origin_y = origin_y + 1;
     let text_argb = rgba_to_argb(text_color);
-    let font_size = font_size * scale.max(1) as f32;
+    let size_px = (font_size * scale.max(1) as f32).round().max(1.0) as u32;
 
-    // Calculate baseline for vertical centering across glyphs.
-    let baseline_y = if let Some(line_metrics) = font.horizontal_line_metrics(font_size) {
-        let line_height = line_metrics.ascent - line_metrics.descent;
-        origin_y as f32 + (area_height as f32 - line_height) / 2.0 + line_metrics.ascent
-    } else {
-        let metrics = font.metrics('A', font_size);
-        origin_y as f32
-            + (area_height as f32 - metrics.height as f32) / 2.0
-            + (metrics.ymin as f32 + metrics.height as f32)
-    };
+    let _ = font::with_face(font_name, size_px, |face| {
+        let metrics = match face.line_metrics() {
+            Some(metrics) => metrics,
+            None => return,
+        };
 
-    // Rasterize and draw each character
-    let mut x_pos = (origin_x + TITLE_PADDING * scale.max(1)) as f32;
-    let max_x = origin_x + area_width - TITLE_PADDING * scale.max(1);
+        let line_height = (metrics.ascender - metrics.descender).max(1);
+        let baseline_y = origin_y + (area_height - line_height) / 2 + metrics.ascender;
 
-    for ch in title.chars() {
-        let (metrics, bitmap) = font.rasterize(ch, font_size);
+        let mut x_pos = origin_x + TITLE_PADDING * scale.max(1);
+        let max_x = origin_x + area_width - TITLE_PADDING * scale.max(1);
 
-        // Check if we have room for this character
-        if (x_pos + metrics.advance_width) as i32 > max_x {
-            break;
-        }
+        for ch in title.chars() {
+            let glyph = match face.load_char(ch) {
+                Some(glyph) => glyph,
+                None => continue,
+            };
+            let advance = glyph.advance;
+            if x_pos + advance > max_x {
+                break;
+            }
 
-        // Calculate position
-        let glyph_x = x_pos as i32 + metrics.xmin;
-        let glyph_y = baseline_y as i32 - (metrics.ymin + metrics.height as i32);
+            let width = glyph.width;
+            let rows = glyph.rows;
+            if width <= 0 || rows <= 0 {
+                x_pos += advance;
+                continue;
+            }
 
-        // Draw the glyph
-        for row in 0..metrics.height {
-            for col in 0..metrics.width {
-                let px = glyph_x + col as i32;
-                let py = glyph_y + row as i32;
+            let pitch = glyph.pitch;
+            let abs_pitch = pitch.abs();
+            let glyph_x = x_pos + glyph.left;
+            let glyph_y = baseline_y - glyph.top;
 
-                if px >= origin_x
-                    && px < origin_x + area_width
-                    && py >= origin_y
-                    && py < origin_y + area_height
-                    && px >= 0
-                    && px < buffer_width
-                    && py >= 0
-                    && py < buffer_height
-                {
-                    let alpha = bitmap[row * metrics.width + col];
-                    if alpha > 0 {
-                        let offset = ((py * buffer_width + px) * 4) as usize;
-                        if offset + 4 <= pixels.len() {
-                            // Alpha blend the text onto the background
-                            blend_pixel(&mut pixels[offset..offset + 4], text_argb, alpha);
-                            // Faux-bold: blend an extra pixel to the right.
-                            let px_bold = px + 1;
-                            if px_bold < origin_x + area_width && px_bold < buffer_width {
-                                let offset_bold = ((py * buffer_width + px_bold) * 4) as usize;
-                                if offset_bold + 4 <= pixels.len() {
-                                    blend_pixel(
-                                        &mut pixels[offset_bold..offset_bold + 4],
-                                        text_argb,
-                                        alpha,
-                                    );
-                                }
+            for row in 0..rows {
+                let row_offset = if pitch < 0 {
+                    (rows - 1 - row) * abs_pitch
+                } else {
+                    row * abs_pitch
+                } as usize;
+                for col in 0..width {
+                    let px = glyph_x + col;
+                    let py = glyph_y + row;
+
+                    if px >= origin_x
+                        && px < origin_x + area_width
+                        && py >= origin_y
+                        && py < origin_y + area_height
+                        && px >= 0
+                        && px < buffer_width
+                        && py >= 0
+                        && py < buffer_height
+                    {
+                        let idx = row_offset + col as usize;
+                        if idx >= glyph.buffer.len() {
+                            continue;
+                        }
+                        let alpha = glyph.buffer[idx];
+                        if alpha > 0 {
+                            let offset = ((py * buffer_width + px) * 4) as usize;
+                            if offset + 4 <= pixels.len() {
+                                blend_pixel(&mut pixels[offset..offset + 4], text_argb, alpha);
                             }
                         }
                     }
                 }
             }
-        }
 
-        x_pos += metrics.advance_width;
-    }
+            x_pos += advance;
+        }
+    });
 }
 
 fn icon_size_for_titlebar(titlebar_height: i32) -> i32 {

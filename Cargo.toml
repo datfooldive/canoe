@@ -25,8 +25,9 @@ memfd = "0.6"
 memmap2 = "0.9"
 
 # Font rendering for titlebars
-fontdue = "0.9"
+freetype = "0.7"
 resvg = "0.42"
+yeslogic-fontconfig-sys = "6"
 
 # Regex for window rules
 regex = "1"
