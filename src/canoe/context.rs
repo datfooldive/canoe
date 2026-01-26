@@ -1214,12 +1214,8 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
         }
     }
 
-    /// Build menu items for windows on the given output (including hidden).
-    pub fn collect_menu_items(&self, output_id: OutputId) -> Vec<MenuItem> {
-        let Some(output) = self.outputs.get(&output_id) else {
-            return Vec::new();
-        };
-        let output_ref = output.borrow();
+    /// Build menu items for windows (including hidden).
+    pub fn collect_menu_items(&self, _output_id: OutputId) -> Vec<MenuItem> {
         let focused = self.focused_window;
 
         let mut items = Vec::new();
@@ -1227,10 +1223,8 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
 
         for window_id in &self.focus_stack {
             if let Some(window) = self.windows.get(window_id) {
-                if window_matches_output(&output_ref, &window.borrow()) {
-                    items.push(menu_item_from_window(*window_id, focused, &window.borrow()));
-                    seen.insert(*window_id);
-                }
+                items.push(menu_item_from_window(*window_id, focused, &window.borrow()));
+                seen.insert(*window_id);
             }
         }
 
@@ -1238,9 +1232,7 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
             if seen.contains(&window_id) {
                 continue;
             }
-            if window_matches_output(&output_ref, &window.borrow()) {
-                items.push(menu_item_from_window(window_id, focused, &window.borrow()));
-            }
+            items.push(menu_item_from_window(window_id, focused, &window.borrow()));
         }
 
         items
@@ -1480,17 +1472,6 @@ fn point_in_titlebar(x: i32, y: i32, width: i32, titlebar_height: i32, px: i32, 
     }
 
     px >= x && px <= x + width && py >= y - titlebar_height && py <= y
-}
-
-fn window_matches_output(output: &Output, window: &Window) -> bool {
-    if let Some(ref win_output) = window.output {
-        if let Some(win_output) = win_output.upgrade() {
-            if win_output.borrow().id != output.id {
-                return false;
-            }
-        }
-    }
-    true
 }
 
 fn menu_item_from_window(

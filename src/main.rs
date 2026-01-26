@@ -266,6 +266,9 @@ fn ensure_window_menu_shield(
     }
 
     let wl_output = output.borrow().wl_output.clone();
+    if wl_output.is_none() {
+        return;
+    }
     let surface = compositor.create_surface(qh, ());
     let layer_surface = layer_shell.get_layer_surface(
         &surface,
@@ -370,6 +373,27 @@ fn update_menu_hover_from_surface(
     if changed {
         render_window_menu(state, qh);
     }
+}
+
+fn update_pointer_position_from_output(
+    state: &AppState,
+    seat: &Rc<RefCell<canoe::Seat>>,
+    output_id: canoe::OutputId,
+    surface_x: f64,
+    surface_y: f64,
+) {
+    let (ox, oy) = {
+        let context = state.context.borrow();
+        let Some(output) = context.outputs.get(&output_id) else {
+            return;
+        };
+        let out = output.borrow();
+        (out.x, out.y)
+    };
+    let global_x = ox + surface_x.round() as i32;
+    let global_y = oy + surface_y.round() as i32;
+    seat.borrow_mut()
+        .update_pointer_position(global_x, global_y);
 }
 
 fn update_titlebar_hover_from_surface(
@@ -487,7 +511,27 @@ fn handle_window_menu_cycle(state: &mut AppState, qh: &QueueHandle<AppState>) {
 
     let output_id = {
         let context = state.context.borrow();
-        context.current_output
+        let focused_output = context.focused_window.and_then(|window_id| {
+            context.windows.get(&window_id).and_then(|window| {
+                let window_ref = window.borrow();
+                let center_x = window_ref.x + (window_ref.width / 2);
+                let center_y = window_ref.y + (window_ref.height / 2);
+                if let Some(output) = window_ref.output.as_ref().and_then(|o| o.upgrade()) {
+                    let out_ref = output.borrow();
+                    if out_ref.contains_point(center_x, center_y) {
+                        return Some(out_ref.id);
+                    }
+                }
+                context.outputs.iter().find_map(|(&id, output)| {
+                    if output.borrow().contains_point(center_x, center_y) {
+                        Some(id)
+                    } else {
+                        None
+                    }
+                })
+            })
+        });
+        focused_output.or(context.current_output)
     };
     let Some(output_id) = output_id else {
         return;
@@ -597,8 +641,32 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
                 }
                 "wl_output" => {
                     let output: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ());
-                    state.globals.wl_outputs.insert(name, output);
+                    state.globals.wl_outputs.insert(name, output.clone());
                     state.globals.wl_output_scales.entry(name).or_insert(1);
+                    let outputs: Vec<_> =
+                        state.context.borrow().outputs.values().cloned().collect();
+                    for output_ref in outputs {
+                        let mut out = output_ref.borrow_mut();
+                        if out.wl_output_name != name {
+                            continue;
+                        }
+                        out.wl_output = Some(output.clone());
+                        out.scale = state
+                            .globals
+                            .wl_output_scales
+                            .get(&name)
+                            .copied()
+                            .unwrap_or(1);
+                        let output_id = out.id;
+                        let had_desktop = out.desktop_surface.is_some();
+                        if had_desktop {
+                            out.desktop_surface = None;
+                        }
+                        drop(out);
+                        if had_desktop || state.globals.wlr_layer_shell.is_some() {
+                            ensure_desktop_surface(state, output_id, qh);
+                        }
+                    }
                 }
                 "wl_seat" => {
                     log::info!("Binding wl_seat v{}", version.min(7));
@@ -1166,22 +1234,36 @@ impl Dispatch<RiverOutputV1, canoe::OutputId> for AppState {
         state: &mut Self,
         _proxy: &RiverOutputV1,
         event: river_window_management_v1::client::river_output_v1::Event,
-        output_id: &canoe::OutputId,
+        _output_id: &canoe::OutputId,
         _conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
         use river_window_management_v1::client::river_output_v1::Event;
 
-        let context = state.context.borrow();
-        let output = match context.outputs.get(output_id) {
-            Some(o) => o.clone(),
-            None => return,
+        let (output_id, output) = {
+            let context = state.context.borrow();
+            let found = context.outputs.iter().find_map(|(id, output)| {
+                if output
+                    .borrow()
+                    .rwm_output
+                    .as_ref()
+                    .map(|rwm| rwm == _proxy)
+                    .unwrap_or(false)
+                {
+                    Some((*id, output.clone()))
+                } else {
+                    None
+                }
+            });
+            let Some(found) = found else {
+                return;
+            };
+            found
         };
-        drop(context);
 
         match event {
             Event::Removed => {
-                state.context.borrow_mut().destroy_output(*output_id);
+                state.context.borrow_mut().destroy_output(output_id);
             }
             Event::WlOutput { name } => {
                 let mut out = output.borrow_mut();
@@ -1193,8 +1275,12 @@ impl Dispatch<RiverOutputV1, canoe::OutputId> for AppState {
                     .get(&name)
                     .copied()
                     .unwrap_or(1);
+                let had_desktop = out.desktop_surface.is_some();
+                if had_desktop {
+                    out.desktop_surface = None;
+                }
                 drop(out);
-                ensure_desktop_surface(state, *output_id, qh);
+                ensure_desktop_surface(state, output_id, qh);
             }
             Event::Position { x, y } => {
                 output.borrow_mut().update_position(x, y);
@@ -1932,6 +2018,13 @@ impl Dispatch<wl_pointer::WlPointer, canoe::SeatId> for AppState {
                         seat_ref.last_surface_x = surface_pos.0;
                         seat_ref.last_surface_y = surface_pos.1;
                     }
+                    if let canoe::PointerTarget::Desktop(output_id)
+                    | canoe::PointerTarget::MenuShield(output_id) = target
+                    {
+                        update_pointer_position_from_output(
+                            state, &seat, output_id, surface_x, surface_y,
+                        );
+                    }
                     if matches!(target, canoe::PointerTarget::MenuShield(_)) {
                         if let Some(pointer) = wl_pointer.as_ref() {
                             pointer.set_cursor(serial, None, 0, 0);
@@ -1982,6 +2075,9 @@ impl Dispatch<wl_pointer::WlPointer, canoe::SeatId> for AppState {
                     } else if let canoe::PointerTarget::Desktop(output_id)
                     | canoe::PointerTarget::MenuShield(output_id) = target
                     {
+                        update_pointer_position_from_output(
+                            state, &seat, output_id, surface_x, surface_y,
+                        );
                         update_menu_hover_from_surface(state, output_id, surface_x, surface_y, _qh);
                     } else if let canoe::PointerTarget::Titlebar(window_id) = target {
                         let changed = update_titlebar_hover_from_surface(
