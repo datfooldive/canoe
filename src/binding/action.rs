@@ -62,6 +62,8 @@ pub enum Action {
 
     /// Hide (minimize) the focused window
     HideFocused,
+    /// Unfullscreen/unmaximize if needed, otherwise hide (minimize) the focused window
+    SmartHideFocused,
     /// Maximize the focused window to the output
     MaximizeFocused,
 
@@ -103,7 +105,7 @@ pub fn default_xkb_bindings(
             Mode::Default,
             Keysym::Down.raw(),
             main,
-            Action::HideFocused,
+            Action::SmartHideFocused,
             super::BindingEvent::Pressed,
         ),
         (
@@ -168,6 +170,20 @@ pub fn default_xkb_bindings(
             Action::SpawnShell {
                 cmd: "fuzzel".to_string(),
             },
+            super::BindingEvent::Pressed,
+        ),
+        (
+            Mode::Default,
+            Keysym::h.raw(),
+            main,
+            Action::HideFocused,
+            super::BindingEvent::Pressed,
+        ),
+        (
+            Mode::Default,
+            Keysym::m.raw(),
+            main,
+            Action::HideFocused,
             super::BindingEvent::Pressed,
         ),
     ]

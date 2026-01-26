@@ -388,6 +388,36 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
                     self.hide_window(window_id);
                 }
             }
+            Action::SmartHideFocused => {
+                let Some(window_id) = self.focused_window else {
+                    return;
+                };
+                let Some(window) = self.windows.get(&window_id) else {
+                    return;
+                };
+                let (is_fullscreen, is_maximized) = {
+                    let w = window.borrow();
+                    let fullscreen = !matches!(w.fullscreen, super::window::FullscreenState::None);
+                    (fullscreen, w.maximized)
+                };
+                if is_fullscreen {
+                    if let Some(window) = self.windows.get(&window_id) {
+                        let mut w = window.borrow_mut();
+                        w.exit_fullscreen();
+                        w.pending_unfullscreen_restore = true;
+                        if let Some(ref rwm) = self.rwm {
+                            rwm.manage_dirty();
+                        }
+                    }
+                    if let Some(output_id) = self.current_output {
+                        self.arrange_output(output_id);
+                    }
+                } else if is_maximized {
+                    self.unmaximize_window(window_id);
+                } else {
+                    self.hide_window(window_id);
+                }
+            }
             Action::MaximizeFocused => {
                 if let Some(window_id) = self.focused_window {
                     self.maximize_window(window_id);

@@ -38,6 +38,10 @@ main_modifier = "alt"
 | `Super+Tab` | Focus next window |
 | `Super+Shift+Tab` | Focus previous window |
 | `Super+Enter` | Toggle fullscreen |
+| `Super+Down` | Unfullscreen/unmaximize, otherwise minimize focused window |
+| `Super+Up` | Maximize focused window |
+| `Super+h` | Minimize focused window |
+| `Super+m` | Minimize focused window |
 
 ## Mouse Actions
 
