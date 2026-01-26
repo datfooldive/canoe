@@ -116,6 +116,10 @@ pub struct Window {
     pub maximized: bool,
     /// Geometry to restore when unmaximizing
     pub pre_maximize: Option<SavedGeometry>,
+    /// Geometry to restore when exiting fullscreen
+    pub pre_fullscreen: Option<SavedGeometry>,
+    /// Restore geometry on the next manage sequence after exiting fullscreen
+    pub pending_unfullscreen_restore: bool,
     /// Floating state
     pub floating: bool,
     /// Hidden state
@@ -173,6 +177,8 @@ impl Window {
             fullscreen: FullscreenState::None,
             maximized: false,
             pre_maximize: None,
+            pre_fullscreen: None,
+            pending_unfullscreen_restore: false,
             floating: false,
             hidden: false,
             clip_state: ClipState::Unknown,
@@ -225,6 +231,16 @@ impl Window {
         self.x = x;
         self.y = y;
         self.position_undefined = false;
+        if matches!(self.fullscreen, FullscreenState::None) && !self.pending_unfullscreen_restore {
+            let saved = self.pre_fullscreen.get_or_insert(SavedGeometry {
+                x,
+                y,
+                width: self.width,
+                height: self.height,
+            });
+            saved.x = x;
+            saved.y = y;
+        }
 
         if let Some(ref rwm_node) = self.rwm_node {
             rwm_node.set_position(x, y);
@@ -235,6 +251,18 @@ impl Window {
     pub fn update_dimensions(&mut self, width: i32, height: i32) {
         self.width = width;
         self.height = height;
+        if matches!(self.fullscreen, FullscreenState::None) && !self.pending_unfullscreen_restore {
+            let saved = self.pre_fullscreen.get_or_insert(SavedGeometry {
+                x: self.x,
+                y: self.y,
+                width,
+                height,
+            });
+            saved.x = self.x;
+            saved.y = self.y;
+            saved.width = width;
+            saved.height = height;
+        }
     }
 
     /// Set the number of pixels to swallow from the top of the window

@@ -897,6 +897,15 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
             match &w.fullscreen {
                 super::window::FullscreenState::None => {
                     // Enter fullscreen
+                    if w.pre_fullscreen.is_none() {
+                        w.pre_fullscreen = Some(super::window::SavedGeometry {
+                            x: w.x,
+                            y: w.y,
+                            width: w.width,
+                            height: w.height,
+                        });
+                    }
+                    w.pending_unfullscreen_restore = false;
                     if let Some(output_id) = self.current_output {
                         if let Some(output) = self.outputs.get(&output_id) {
                             let output_ref = output.borrow();
@@ -911,6 +920,10 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
                 _ => {
                     // Exit fullscreen
                     w.exit_fullscreen();
+                    w.pending_unfullscreen_restore = true;
+                    if let Some(ref rwm) = self.rwm {
+                        rwm.manage_dirty();
+                    }
                 }
             }
         }
@@ -922,6 +935,33 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
 
     /// Handle manage_start event - process pending window events and arrange windows
     pub fn handle_manage_start(&mut self) {
+        // Apply deferred fullscreen restores from the previous manage sequence.
+        let restore_ids: Vec<WindowId> = self
+            .windows
+            .iter()
+            .filter_map(|(&id, w)| {
+                let w = w.borrow();
+                if w.pending_unfullscreen_restore
+                    && matches!(w.fullscreen, super::window::FullscreenState::None)
+                    && w.pre_fullscreen.is_some()
+                {
+                    Some(id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for window_id in restore_ids {
+            if let Some(window) = self.windows.get(&window_id) {
+                let mut w = window.borrow_mut();
+                if let Some(saved) = w.pre_fullscreen {
+                    w.set_position(saved.x, saved.y);
+                    w.propose_dimensions(saved.width, saved.height);
+                }
+                w.pending_unfullscreen_restore = false;
+            }
+        }
+
         // Process seat actions
         let seat_ids: Vec<SeatId> = self.seats.keys().copied().collect();
         for seat_id in seat_ids {
@@ -1012,16 +1052,32 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
                 if let Some(window) = self.windows.get(&window_id) {
                     let mut w = window.borrow_mut();
                     // Handle fullscreen request
+                    if w.pre_fullscreen.is_none() {
+                        w.pre_fullscreen = Some(super::window::SavedGeometry {
+                            x: w.x,
+                            y: w.y,
+                            width: w.width,
+                            height: w.height,
+                        });
+                    }
+                    w.pending_unfullscreen_restore = false;
                     if let Some(output) = output.and_then(|o| o.upgrade()) {
                         if let Some(ref rwm_output) = output.borrow().rwm_output {
                             w.fullscreen_on(rwm_output);
+                            w.fullscreen =
+                                super::window::FullscreenState::Output(Rc::downgrade(&output));
                         }
                     }
                 }
             }
             WindowEvent::Unfullscreen => {
                 if let Some(window) = self.windows.get(&window_id) {
-                    window.borrow_mut().exit_fullscreen();
+                    let mut w = window.borrow_mut();
+                    w.exit_fullscreen();
+                    w.pending_unfullscreen_restore = true;
+                    if let Some(ref rwm) = self.rwm {
+                        rwm.manage_dirty();
+                    }
                 }
             }
             WindowEvent::Maximize => {
@@ -1207,6 +1263,13 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
     pub fn finish_manage(&self) {
         if let Some(ref rwm) = self.rwm {
             rwm.manage_finish();
+            let needs_restore = self
+                .windows
+                .values()
+                .any(|w| w.borrow().pending_unfullscreen_restore);
+            if needs_restore {
+                rwm.manage_dirty();
+            }
         }
     }
 
