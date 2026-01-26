@@ -235,6 +235,8 @@ pub struct Titlebar {
     base_frame_active: Option<BaseFrameCacheEntry>,
     base_frame_inactive: Option<BaseFrameCacheEntry>,
     button_cache: Option<ButtonCache>,
+    /// wl_output names the titlebar surface is currently on
+    pub output_names: Vec<u32>,
     /// Whether titlebar needs redraw
     pub dirty: bool,
     last_title: Option<String>,
@@ -265,6 +267,7 @@ impl Titlebar {
             base_frame_active: None,
             base_frame_inactive: None,
             button_cache: None,
+            output_names: Vec::new(),
             dirty: true,
             last_title: None,
             last_is_active: false,

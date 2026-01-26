@@ -730,12 +730,28 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                         let swallow_top = w.swallow_top;
 
                         // Update titlebar if it exists and window has valid dimensions
-                        let scale = w
+                        let output_scale = w
                             .output
                             .as_ref()
                             .and_then(|o| o.upgrade())
-                            .map(|o| o.borrow().scale)
-                            .unwrap_or(1);
+                            .map(|o| o.borrow().scale);
+                        let titlebar_output_names = w
+                            .titlebar
+                            .as_ref()
+                            .map(|t| t.output_names.clone())
+                            .unwrap_or_default();
+                        let titlebar_surface_scale = if titlebar_output_names.is_empty() {
+                            None
+                        } else {
+                            let mut max_scale = 1;
+                            for name in &titlebar_output_names {
+                                if let Some(scale) = state.globals.wl_output_scales.get(name) {
+                                    max_scale = max_scale.max(*scale);
+                                }
+                            }
+                            Some(max_scale)
+                        };
+                        let scale = titlebar_surface_scale.or(output_scale).unwrap_or(1);
                         if let Some(ref mut titlebar) = w.titlebar {
                             if width > 0 && height > 0 {
                                 let content_height = (height - swallow_top).max(1);
@@ -2229,7 +2245,61 @@ impl Dispatch<wl_surface::WlSurface, TitlebarSurfaceData> for AppState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        // Surface events (enter/leave output) - not needed for titlebars
+        let (output_name, is_enter) = match &_event {
+            wl_surface::Event::Enter { output } => {
+                let name = _state
+                    .globals
+                    .wl_outputs
+                    .iter()
+                    .find_map(|(name, wl_output)| {
+                        if wl_output == output {
+                            Some(*name)
+                        } else {
+                            None
+                        }
+                    });
+                (name, true)
+            }
+            wl_surface::Event::Leave { output } => {
+                let name = _state
+                    .globals
+                    .wl_outputs
+                    .iter()
+                    .find_map(|(name, wl_output)| {
+                        if wl_output == output {
+                            Some(*name)
+                        } else {
+                            None
+                        }
+                    });
+                (name, false)
+            }
+            _ => (None, false),
+        };
+        let Some(output_name) = output_name else {
+            return;
+        };
+
+        let window = {
+            let context = _state.context.borrow();
+            context.windows.get(&_data.window_id).cloned()
+        };
+        let Some(window) = window else {
+            return;
+        };
+
+        let mut w = window.borrow_mut();
+        let Some(ref mut titlebar) = w.titlebar else {
+            return;
+        };
+
+        if is_enter {
+            if !titlebar.output_names.contains(&output_name) {
+                titlebar.output_names.push(output_name);
+            }
+        } else {
+            titlebar.output_names.retain(|name| *name != output_name);
+        }
     }
 }
 
