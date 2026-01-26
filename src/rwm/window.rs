@@ -39,7 +39,6 @@ pub struct SavedGeometry {
     pub y: i32,
     pub width: i32,
     pub height: i32,
-    pub floating: bool,
 }
 
 /// Operator state for move/resize operations
@@ -208,11 +207,6 @@ impl Window {
         }
 
         true
-    }
-
-    /// Check if window should be treated as tiled
-    pub fn is_tiled(&self) -> bool {
-        !self.floating && matches!(self.fullscreen, FullscreenState::None)
     }
 
     /// Propose dimensions for the window

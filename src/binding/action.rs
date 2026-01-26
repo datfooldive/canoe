@@ -43,10 +43,7 @@ pub enum Action {
     SpawnShell { cmd: String },
 
     /// Cycle focus through windows
-    FocusIter {
-        direction: Direction,
-        skip_floating: bool,
-    },
+    FocusIter { direction: Direction },
     /// Cycle focus through outputs
     FocusOutputIter { direction: Direction },
 

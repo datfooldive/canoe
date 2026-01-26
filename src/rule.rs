@@ -60,8 +60,6 @@ pub struct Rule {
     /// Require the window to have no parent
     pub require_no_parent: Option<bool>,
 
-    /// Whether matching windows should float
-    pub floating: Option<bool>,
     /// Decoration style for matching windows
     pub decoration: Option<WindowDecoration>,
     /// Pixels to swallow from the top of matching windows
@@ -130,9 +128,6 @@ pub fn apply_rules(
 
     for rule in rules {
         if rule.matches(app_id, title, decoration_hint, has_parent) {
-            if let Some(floating) = rule.floating {
-                applied.floating = Some(floating);
-            }
             if let Some(decoration) = rule.decoration {
                 applied.decoration = Some(decoration);
             }
@@ -148,7 +143,6 @@ pub fn apply_rules(
 /// Result of applying rules to a window
 #[derive(Debug, Clone, Default)]
 pub struct AppliedRules {
-    pub floating: Option<bool>,
     pub decoration: Option<WindowDecoration>,
     pub swallow_top: Option<i32>,
 }
@@ -193,6 +187,6 @@ mod tests {
         }];
 
         let applied = apply_rules(&rules, Some("foot"), None, 3, false);
-        assert!(applied.floating.is_none());
+        assert!(applied.decoration.is_none());
     }
 }

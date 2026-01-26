@@ -43,7 +43,7 @@ RUST_LOG=info river -c ./target/release/rwm
 
 ## Features
 
-- Stacking/floating window management
+- Stacking window management
 - Yellow window borders (10px)
 - Yellow titlebars (24px)
 - Server-side decorations

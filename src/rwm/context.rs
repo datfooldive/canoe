@@ -226,9 +226,6 @@ impl Context {
             window.parent.is_some(),
         );
 
-        if let Some(floating) = applied.floating {
-            window.floating = floating;
-        }
         if let Some(decoration) = applied.decoration {
             window.decoration = Some(decoration);
         }
@@ -285,7 +282,7 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
     }
 
     /// Focus the next/previous window
-    pub fn focus_iter(&mut self, direction: Direction, skip_floating: bool) {
+    pub fn focus_iter(&mut self, direction: Direction) {
         let current_output = match self.current_output.and_then(|id| self.outputs.get(&id)) {
             Some(o) => o.clone(),
             None => return,
@@ -298,7 +295,7 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
             .iter()
             .filter(|(_, w)| {
                 let w = w.borrow();
-                w.is_visible_on(&output) && (!skip_floating || !w.floating)
+                w.is_visible_on(&output)
             })
             .map(|(&id, _)| id)
             .collect();
@@ -353,11 +350,8 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
             Action::SpawnShell { cmd } => {
                 self.spawn_shell(&cmd);
             }
-            Action::FocusIter {
-                direction,
-                skip_floating,
-            } => {
-                self.focus_iter(direction, skip_floating);
+            Action::FocusIter { direction } => {
+                self.focus_iter(direction);
             }
             Action::FocusOutputIter { direction } => {
                 self.focus_output_iter(direction);
@@ -832,7 +826,6 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
                     y: w.y,
                     width: w.width,
                     height: w.height,
-                    floating: w.floating,
                 });
             }
             w.floating = true;
@@ -875,7 +868,6 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
             let mut w = window.borrow_mut();
             w.maximized = false;
             if let Some(saved) = w.pre_maximize.take() {
-                w.floating = saved.floating;
                 w.set_position(saved.x, saved.y);
                 w.propose_dimensions(saved.width, saved.height);
             }

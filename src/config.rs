@@ -197,7 +197,6 @@ struct RuleFile {
     title_regex: Option<String>,
     require_csd_only: Option<bool>,
     require_no_parent: Option<bool>,
-    floating: Option<bool>,
     decoration: Option<String>,
     swallow_top: Option<i32>,
 }
@@ -373,7 +372,6 @@ fn rules_from_file(rules: Vec<RuleFile>) -> Vec<Rule> {
             title_regex: compile_regex(rule.title_regex, "title"),
             require_csd_only: rule.require_csd_only,
             require_no_parent: rule.require_no_parent,
-            floating: rule.floating,
             decoration: parse_decoration(rule.decoration),
             swallow_top: rule.swallow_top,
         })
@@ -406,33 +404,7 @@ pub fn load_config() -> Config {
 
 /// Get default window rules
 fn default_rules() -> Vec<Rule> {
-    vec![
-        Rule {
-            app_id: None,
-            title: None,
-            floating: Some(true),
-            ..Default::default()
-        },
-        Rule {
-            app_id: Some(vec!["zenity".to_string()]),
-            floating: Some(true),
-            ..Default::default()
-        },
-        Rule {
-            app_id: Some(vec!["DesktopEditors".to_string()]),
-            floating: Some(true),
-            ..Default::default()
-        },
-        Rule {
-            app_id: Some(vec!["xdg-desktop-portal-gtk".to_string()]),
-            floating: Some(true),
-            ..Default::default()
-        },
-        Rule {
-            app_id: Some(vec!["chromium".to_string()]),
-            ..Default::default()
-        },
-    ]
+    Vec::new()
 }
 
 /// Helper module for home directory
