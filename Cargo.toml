@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 description = "Canoe, a River window manager implementation in Rust"
 license = "MIT"
+repository = "https://github.com/roblillack/canoe"
+homepage = "https://github.com/roblillack/canoe"
 
 [dependencies]
 # Wayland client bindings
