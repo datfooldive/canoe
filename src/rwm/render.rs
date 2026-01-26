@@ -102,6 +102,40 @@ impl<'a> Renderer<'a> {
             }
         }
     }
+
+    pub fn blit_argb(&mut self, src: &[u8], src_width: i32, src_height: i32, x: i32, y: i32) {
+        if src_width <= 0 || src_height <= 0 {
+            return;
+        }
+
+        let dst_width = self.width();
+        let dst_height = self.height();
+        if dst_width <= 0 || dst_height <= 0 {
+            return;
+        }
+
+        let x0 = x.max(0);
+        let y0 = y.max(0);
+        let x1 = (x + src_width).min(dst_width);
+        let y1 = (y + src_height).min(dst_height);
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+
+        let dst = self.data_mut();
+        for row in y0..y1 {
+            let src_y = row - y;
+            for col in x0..x1 {
+                let src_x = col - x;
+                let src_offset = ((src_y * src_width + src_x) * 4) as usize;
+                let dst_offset = ((row * dst_width + col) * 4) as usize;
+                if src_offset + 4 <= src.len() && dst_offset + 4 <= dst.len() {
+                    dst[dst_offset..dst_offset + 4]
+                        .copy_from_slice(&src[src_offset..src_offset + 4]);
+                }
+            }
+        }
+    }
 }
 
 /// Alpha blend a premultiplied RGBA source over an ARGB destination.
