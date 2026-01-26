@@ -118,3 +118,4 @@ pub use river_input_management_v1::client::river_input_manager_v1::RiverInputMan
 
 pub use river_libinput_config_v1::client::river_libinput_config_v1::RiverLibinputConfigV1;
 pub use river_libinput_config_v1::client::river_libinput_device_v1::RiverLibinputDeviceV1;
+pub use river_libinput_config_v1::client::river_libinput_result_v1::RiverLibinputResultV1;

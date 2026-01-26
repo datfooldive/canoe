@@ -50,6 +50,7 @@ struct Globals {
     wlr_layer_shell: Option<ZwlrLayerShellV1>,
     cursor_shape_manager: Option<WpCursorShapeManagerV1>,
     wl_seats: HashMap<u32, wl_seat::WlSeat>,
+    wl_seat_has_pointer: HashMap<u32, bool>,
     wl_outputs: HashMap<u32, wl_output::WlOutput>,
     wl_output_scales: HashMap<u32, i32>,
 }
@@ -73,13 +74,21 @@ fn attach_wl_seat(
     {
         let mut seat = seat_ref.borrow_mut();
         seat.wl_seat = Some(wl_seat.clone());
-        if seat.wl_pointer.is_none() {
-            let wl_pointer = wl_seat.get_pointer(qh, seat.id);
-            seat.wl_pointer = Some(wl_pointer);
-        }
     }
 
-    attach_cursor_shape_device(state, seat_ref, qh);
+    let has_pointer = state
+        .globals
+        .wl_seat_has_pointer
+        .get(&wl_seat_name)
+        .copied()
+        .unwrap_or(false);
+    if has_pointer {
+        if seat_ref.borrow().wl_pointer.is_none() {
+            let wl_pointer = wl_seat.get_pointer(qh, seat_ref.borrow().id);
+            seat_ref.borrow_mut().wl_pointer = Some(wl_pointer);
+        }
+        attach_cursor_shape_device(state, seat_ref, qh);
+    }
 }
 
 fn attach_cursor_shape_device(
@@ -595,6 +604,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
                     log::info!("Binding wl_seat v{}", version.min(7));
                     let seat: wl_seat::WlSeat = registry.bind(name, version.min(7), qh, name);
                     state.globals.wl_seats.insert(name, seat);
+                    state.globals.wl_seat_has_pointer.insert(name, false);
 
                     let seats: Vec<_> = state.context.borrow().seats.values().cloned().collect();
                     for seat_ref in seats {
@@ -1662,6 +1672,17 @@ impl Dispatch<RiverLibinputConfigV1, ()> for AppState {
     ) {
         // Libinput config events
     }
+
+    fn event_created_child(
+        opcode: u16,
+        qhandle: &QueueHandle<Self>,
+    ) -> std::sync::Arc<dyn wayland_client::backend::ObjectData> {
+        match opcode {
+            // libinput_device event (opcode 1) creates a river_libinput_device_v1
+            1 => qhandle.make_data::<RiverLibinputDeviceV1, _>(()),
+            _ => unreachable!("unknown event opcode {}", opcode),
+        }
+    }
 }
 
 impl Dispatch<RiverLibinputDeviceV1, ()> for AppState {
@@ -1674,6 +1695,26 @@ impl Dispatch<RiverLibinputDeviceV1, ()> for AppState {
         _qh: &QueueHandle<Self>,
     ) {
         // Libinput device events
+    }
+
+    fn event_created_child(
+        _opcode: u16,
+        qhandle: &QueueHandle<Self>,
+    ) -> std::sync::Arc<dyn wayland_client::backend::ObjectData> {
+        qhandle.make_data::<RiverLibinputResultV1, _>(())
+    }
+}
+
+impl Dispatch<RiverLibinputResultV1, ()> for AppState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &RiverLibinputResultV1,
+        _event: river_libinput_config_v1::client::river_libinput_result_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // Libinput config result events
     }
 }
 
@@ -1749,14 +1790,51 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for AppState {
 
 impl Dispatch<wl_seat::WlSeat, u32> for AppState {
     fn event(
-        _state: &mut Self,
-        _proxy: &wl_seat::WlSeat,
-        _event: wl_seat::Event,
-        _data: &u32,
+        state: &mut Self,
+        proxy: &wl_seat::WlSeat,
+        event: wl_seat::Event,
+        seat_name: &u32,
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
-        // wl_seat events are not needed; river provides seat information.
+        if let wl_seat::Event::Capabilities { capabilities } = event {
+            let has_pointer = matches!(
+                capabilities,
+                wayland_client::WEnum::Value(caps)
+                    if caps.contains(wl_seat::Capability::Pointer)
+            );
+            state
+                .globals
+                .wl_seat_has_pointer
+                .insert(*seat_name, has_pointer);
+
+            let seat_ref = {
+                let context = state.context.borrow();
+                context
+                    .seats
+                    .values()
+                    .find(|seat| seat.borrow().wl_seat_name == *seat_name)
+                    .cloned()
+            };
+
+            if let Some(seat_ref) = seat_ref {
+                if has_pointer {
+                    if seat_ref.borrow().wl_pointer.is_none() {
+                        let wl_pointer = proxy.get_pointer(qh, seat_ref.borrow().id);
+                        seat_ref.borrow_mut().wl_pointer = Some(wl_pointer);
+                    }
+                    attach_cursor_shape_device(state, &seat_ref, qh);
+                } else {
+                    let mut seat = seat_ref.borrow_mut();
+                    if let Some(pointer) = seat.wl_pointer.take() {
+                        pointer.release();
+                    }
+                    seat.cursor_shape_device = None;
+                    seat.pointer_enter_serial = 0;
+                    seat.cursor_shape = None;
+                }
+            }
+        }
     }
 }
 
