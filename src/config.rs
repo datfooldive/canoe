@@ -147,7 +147,6 @@ pub struct Config {
     pub scroll_factor: f64,
     pub sloppy_focus: bool,
 
-    pub default_window_decoration: WindowDecoration,
     pub border_color: BorderColor,
     pub ui: UiConfig,
 
@@ -167,7 +166,6 @@ impl Default for Config {
             scroll_factor: 1.0,
             sloppy_focus: false,
 
-            default_window_decoration: WindowDecoration::Ssd,
             border_color: BorderColor::default(),
             ui: UiConfig::default(),
 

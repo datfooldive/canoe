@@ -1,7 +1,7 @@
 //! Core context - central state management
 
 use crate::binding::{Action, Direction, PointerBinding, XkbBinding};
-use crate::config::{load_config, Config};
+use crate::config::{load_config, Config, WindowDecoration};
 use crate::protocol::river_window_management_v1::client::river_window_v1::Edges;
 use crate::protocol::*;
 use crate::rule;
@@ -102,9 +102,6 @@ impl Context {
 
         let mut window = Window::new(id);
         window.rwm_window = Some(rwm_window);
-
-        // Set default decoration
-        window.decoration = Some(self.config.default_window_decoration);
 
         // Assign to current output if available
         if let Some(output_id) = self.current_output {
@@ -228,8 +225,18 @@ impl Context {
 
         if let Some(decoration) = applied.decoration {
             window.decoration = Some(decoration);
+        } else {
+            // Force SSD unless explicitly overridden by a rule.
+            window.decoration = Some(WindowDecoration::Ssd);
         }
         window.set_swallow_top(applied.swallow_top.unwrap_or(0));
+
+        if matches!(window.decoration, Some(WindowDecoration::Csd)) {
+            window.titlebar = None;
+            window.titlebar_hovered = None;
+            window.titlebar_pressed = None;
+            window.titlebar_left_down = false;
+        }
     }
 
     /// Focus a window
@@ -958,7 +965,7 @@ floating={}, maximized={}, fullscreen={:?}, hidden={}",
                     let mut w = window.borrow_mut();
                     self.apply_rules_to_window(&mut w);
 
-                    // Set decoration to SSD (server-side)
+                    // Apply decoration preference (if any)
                     if let Some(decoration) = w.decoration {
                         log::info!("Window {} setting decoration: {:?}", window_id, decoration);
                         w.set_decoration(decoration);
