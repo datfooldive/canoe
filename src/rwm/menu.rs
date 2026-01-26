@@ -10,7 +10,7 @@ use wayland_client::protocol::{
 use wayland_client::QueueHandle;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1;
 
-use super::{font, OutputId, WindowId};
+use super::{font, render::Renderer, OutputId, WindowId};
 
 /// Menu entry data.
 #[derive(Debug, Clone)]
@@ -268,31 +268,22 @@ impl WindowMenu {
 
         let pixels = mmap.as_mut();
         clear_buffer(pixels);
+        let mut renderer = match Renderer::new(pixels, self.buffer_width, self.buffer_height) {
+            Some(renderer) => renderer,
+            None => return,
+        };
 
         draw_shadow(
-            pixels,
-            self.buffer_width,
-            self.buffer_height,
+            &mut renderer,
             menu_w_px,
             menu_h_px,
             rgba_to_argb(SHADOW_COLOR),
         );
 
-        fill_rect(
-            pixels,
-            self.buffer_width,
-            self.buffer_height,
-            0,
-            0,
-            menu_w_px,
-            menu_h_px,
-            rgba_to_argb(self.theme.bg),
-        );
+        renderer.fill_rect(0, 0, menu_w_px, menu_h_px, rgba_to_argb(self.theme.bg));
 
         draw_border_rect(
-            pixels,
-            self.buffer_width,
-            self.buffer_height,
+            &mut renderer,
             0,
             0,
             menu_w_px,
@@ -324,10 +315,7 @@ impl WindowMenu {
                 rgba_to_argb(self.theme.text)
             };
 
-            fill_rect(
-                pixels,
-                self.buffer_width,
-                self.buffer_height,
+            renderer.fill_rect(
                 MENU_BORDER * scale,
                 y * scale,
                 (menu_w - MENU_BORDER * 2) * scale,
@@ -337,9 +325,7 @@ impl WindowMenu {
 
             if item.hidden {
                 draw_dashed_rect(
-                    pixels,
-                    self.buffer_width,
-                    self.buffer_height,
+                    &mut renderer,
                     start_x * scale,
                     (y + (item_h - ICON_SIZE) / 2) * scale,
                     ICON_SIZE * scale,
@@ -349,9 +335,7 @@ impl WindowMenu {
             }
             if item.active {
                 draw_diamond(
-                    pixels,
-                    self.buffer_width,
-                    self.buffer_height,
+                    &mut renderer,
                     (start_x + (ICON_SIZE - ACTIVE_DIAMOND_SIZE) / 2) * scale,
                     (y + (item_h - ACTIVE_DIAMOND_SIZE) / 2) * scale,
                     ACTIVE_DIAMOND_SIZE * scale,
@@ -359,18 +343,17 @@ impl WindowMenu {
                 );
             }
 
-            render_text(
-                pixels,
-                self.buffer_width,
-                self.buffer_height,
+            renderer.render_text(
                 &item.title,
                 text_start_x * scale,
                 y * scale,
                 text_area_w * scale,
                 item_h * scale,
-                text_color,
                 scale,
-                &self.theme,
+                text_color,
+                self.theme.font_size,
+                self.theme.font_name.as_deref(),
+                0,
             );
 
             y += item_h;
@@ -458,94 +441,6 @@ fn measure_menu(items: &[MenuItem], theme: &MenuTheme) -> (i32, i32) {
     (menu_w + SHADOW_SIZE, menu_h + SHADOW_SIZE)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn render_text(
-    pixels: &mut [u8],
-    buffer_width: i32,
-    buffer_height: i32,
-    text: &str,
-    origin_x: i32,
-    origin_y: i32,
-    area_width: i32,
-    area_height: i32,
-    text_argb: u32,
-    scale: i32,
-    theme: &MenuTheme,
-) {
-    let size_px = (theme.font_size * scale.max(1) as f32).round().max(1.0) as u32;
-
-    let _ = font::with_face(theme.font_name.as_deref(), size_px, |face| {
-        let metrics = match face.line_metrics() {
-            Some(metrics) => metrics,
-            None => return,
-        };
-
-        let line_height = (metrics.ascender - metrics.descender).max(1);
-        let baseline_y = origin_y + (area_height - line_height) / 2 + metrics.ascender;
-
-        let mut x_pos = origin_x;
-        let max_x = origin_x + area_width;
-
-        for ch in text.chars() {
-            let glyph = match face.load_char(ch) {
-                Some(glyph) => glyph,
-                None => continue,
-            };
-            let advance = glyph.advance;
-            if x_pos + advance > max_x {
-                break;
-            }
-
-            let width = glyph.width;
-            let rows = glyph.rows;
-            if width <= 0 || rows <= 0 {
-                x_pos += advance;
-                continue;
-            }
-            let pitch = glyph.pitch;
-            let abs_pitch = pitch.abs();
-            let glyph_x = x_pos + glyph.left;
-            let glyph_y = baseline_y - glyph.top;
-
-            for row in 0..rows {
-                let row_offset = if pitch < 0 {
-                    (rows - 1 - row) * abs_pitch
-                } else {
-                    row * abs_pitch
-                } as usize;
-                for col in 0..width {
-                    let px = glyph_x + col;
-                    let py = glyph_y + row;
-                    if px < origin_x
-                        || px >= origin_x + area_width
-                        || py < origin_y
-                        || py >= origin_y + area_height
-                        || px < 0
-                        || py < 0
-                        || px >= buffer_width
-                        || py >= buffer_height
-                    {
-                        continue;
-                    }
-                    let idx = row_offset + col as usize;
-                    if idx >= glyph.buffer.len() {
-                        continue;
-                    }
-                    let alpha = glyph.buffer[idx];
-                    if alpha > 0 {
-                        let offset = ((py * buffer_width + px) * 4) as usize;
-                        if offset + 4 <= pixels.len() {
-                            blend_pixel(&mut pixels[offset..offset + 4], text_argb, alpha);
-                        }
-                    }
-                }
-            }
-
-            x_pos += advance;
-        }
-    });
-}
-
 fn rgba_to_argb(rgba: u32) -> u32 {
     let r = (rgba >> 24) & 0xff;
     let g = (rgba >> 16) & 0xff;
@@ -554,73 +449,14 @@ fn rgba_to_argb(rgba: u32) -> u32 {
     (a << 24) | (r << 16) | (g << 8) | b
 }
 
-fn blend_pixel(bg: &mut [u8], fg_argb: u32, alpha: u8) {
-    let fg_a = ((fg_argb >> 24) & 0xff) as u16;
-    let fg_r = ((fg_argb >> 16) & 0xff) as u16;
-    let fg_g = ((fg_argb >> 8) & 0xff) as u16;
-    let fg_b = (fg_argb & 0xff) as u16;
-
-    let a = (alpha as u16 * fg_a) / 255;
-    let inv_a = 255 - a;
-
-    let bg_val = u32::from_ne_bytes([bg[0], bg[1], bg[2], bg[3]]);
-    let bg_r = ((bg_val >> 16) & 0xff) as u16;
-    let bg_g = ((bg_val >> 8) & 0xff) as u16;
-    let bg_b = (bg_val & 0xff) as u16;
-
-    let out_r = ((fg_r * a + bg_r * inv_a) / 255) as u8;
-    let out_g = ((fg_g * a + bg_g * inv_a) / 255) as u8;
-    let out_b = ((fg_b * a + bg_b * inv_a) / 255) as u8;
-
-    let out_argb = 0xFF000000 | ((out_r as u32) << 16) | ((out_g as u32) << 8) | (out_b as u32);
-    bg.copy_from_slice(&out_argb.to_ne_bytes());
-}
-
 fn clear_buffer(pixels: &mut [u8]) {
     for chunk in pixels.chunks_exact_mut(4) {
         chunk.copy_from_slice(&[0, 0, 0, 0]);
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn fill_rect(
-    pixels: &mut [u8],
-    buffer_width: i32,
-    buffer_height: i32,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-    color_argb: u32,
-) {
-    if width <= 0 || height <= 0 {
-        return;
-    }
-
-    let x0 = x.max(0);
-    let y0 = y.max(0);
-    let x1 = (x + width).min(buffer_width);
-    let y1 = (y + height).min(buffer_height);
-    if x1 <= x0 || y1 <= y0 {
-        return;
-    }
-
-    let color_bytes = color_argb.to_ne_bytes();
-    for row in y0..y1 {
-        for col in x0..x1 {
-            let offset = ((row * buffer_width + col) * 4) as usize;
-            if offset + 4 <= pixels.len() {
-                pixels[offset..offset + 4].copy_from_slice(&color_bytes);
-            }
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
 fn draw_border_rect(
-    pixels: &mut [u8],
-    buffer_width: i32,
-    buffer_height: i32,
+    renderer: &mut Renderer,
     x: i32,
     y: i32,
     width: i32,
@@ -631,74 +467,25 @@ fn draw_border_rect(
         return;
     }
 
-    fill_rect(
-        pixels,
-        buffer_width,
-        buffer_height,
-        x,
-        y,
-        width,
-        1,
-        color_argb,
-    );
-    fill_rect(
-        pixels,
-        buffer_width,
-        buffer_height,
-        x,
-        y + height - 1,
-        width,
-        1,
-        color_argb,
-    );
-    fill_rect(
-        pixels,
-        buffer_width,
-        buffer_height,
-        x,
-        y,
-        1,
-        height,
-        color_argb,
-    );
-    fill_rect(
-        pixels,
-        buffer_width,
-        buffer_height,
-        x + width - 1,
-        y,
-        1,
-        height,
-        color_argb,
-    );
+    renderer.fill_rect(x, y, width, 1, color_argb);
+    renderer.fill_rect(x, y + height - 1, width, 1, color_argb);
+    renderer.fill_rect(x, y, 1, height, color_argb);
+    renderer.fill_rect(x + width - 1, y, 1, height, color_argb);
 }
 
-fn draw_shadow(
-    pixels: &mut [u8],
-    buffer_width: i32,
-    buffer_height: i32,
-    menu_width: i32,
-    menu_height: i32,
-    color_argb: u32,
-) {
+fn draw_shadow(renderer: &mut Renderer, menu_width: i32, menu_height: i32, color_argb: u32) {
     if menu_width <= 0 || menu_height <= 0 {
         return;
     }
 
-    fill_rect(
-        pixels,
-        buffer_width,
-        buffer_height,
+    renderer.fill_rect(
         SHADOW_SIZE,
         menu_height,
         menu_width,
         SHADOW_SIZE,
         color_argb,
     );
-    fill_rect(
-        pixels,
-        buffer_width,
-        buffer_height,
+    renderer.fill_rect(
         menu_width,
         SHADOW_SIZE,
         SHADOW_SIZE,
@@ -709,9 +496,7 @@ fn draw_shadow(
 
 #[allow(clippy::too_many_arguments)]
 fn draw_dashed_rect(
-    pixels: &mut [u8],
-    buffer_width: i32,
-    buffer_height: i32,
+    renderer: &mut Renderer,
     x: i32,
     y: i32,
     width: i32,
@@ -723,79 +508,26 @@ fn draw_dashed_rect(
     let mut px = x;
     while px < x + width {
         let segment = (x + width - px).min(dash);
-        fill_rect(
-            pixels,
-            buffer_width,
-            buffer_height,
-            px,
-            y,
-            segment,
-            1,
-            color_argb,
-        );
-        fill_rect(
-            pixels,
-            buffer_width,
-            buffer_height,
-            px,
-            y + height - 1,
-            segment,
-            1,
-            color_argb,
-        );
+        renderer.fill_rect(px, y, segment, 1, color_argb);
+        renderer.fill_rect(px, y + height - 1, segment, 1, color_argb);
         px += dash + gap;
     }
 
     let mut py = y;
     while py < y + height {
         let segment = (y + height - py).min(dash);
-        fill_rect(
-            pixels,
-            buffer_width,
-            buffer_height,
-            x,
-            py,
-            1,
-            segment,
-            color_argb,
-        );
-        fill_rect(
-            pixels,
-            buffer_width,
-            buffer_height,
-            x + width - 1,
-            py,
-            1,
-            segment,
-            color_argb,
-        );
+        renderer.fill_rect(x, py, 1, segment, color_argb);
+        renderer.fill_rect(x + width - 1, py, 1, segment, color_argb);
         py += dash + gap;
     }
 }
 
-fn draw_diamond(
-    pixels: &mut [u8],
-    buffer_width: i32,
-    buffer_height: i32,
-    x: i32,
-    y: i32,
-    size: i32,
-    color_argb: u32,
-) {
+fn draw_diamond(renderer: &mut Renderer, x: i32, y: i32, size: i32, color_argb: u32) {
     let half = size / 2;
     for row in 0..size {
         let dist = (half - row).abs();
         let span = size - dist * 2;
         let draw_x = x + dist;
-        fill_rect(
-            pixels,
-            buffer_width,
-            buffer_height,
-            draw_x,
-            y + row,
-            span.max(1),
-            1,
-            color_argb,
-        );
+        renderer.fill_rect(draw_x, y + row, span.max(1), 1, color_argb);
     }
 }
