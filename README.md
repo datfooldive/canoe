@@ -34,11 +34,10 @@ main_modifier = "alt"
 |----------|--------|
 | `Super+Shift+Return` | Open terminal (foot) |
 | `Super+Space` | Open application launcher (fuzzel) |
-| `Super+Shift+c` | Close focused window |
-| `Super+Shift+q` | Quit Canoe |
+| `Super+w` | Close focused window |
 | `Super+Tab` | Focus next window |
 | `Super+Shift+Tab` | Focus previous window |
-| `Super+f` | Toggle fullscreen |
+| `Super+Enter` | Toggle fullscreen |
 
 ## Mouse Actions
 

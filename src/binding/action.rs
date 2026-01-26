@@ -94,15 +94,8 @@ pub fn default_xkb_bindings(
         // Essential window management
         (
             Mode::Default,
-            Keysym::q.raw(),
-            main | shift,
-            Action::Quit,
-            super::BindingEvent::Pressed,
-        ),
-        (
-            Mode::Default,
-            Keysym::c.raw(),
-            main | shift,
+            Keysym::w.raw(),
+            main,
             Action::Close,
             super::BindingEvent::Pressed,
         ),
@@ -152,7 +145,7 @@ pub fn default_xkb_bindings(
         // Fullscreen toggle
         (
             Mode::Default,
-            Keysym::f.raw(),
+            Keysym::Return.raw(),
             main,
             Action::ToggleFullscreen { in_window: false },
             super::BindingEvent::Pressed,
