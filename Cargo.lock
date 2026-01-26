@@ -110,6 +110,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fbdf580320f38b612e485521afda1ee26d10cc9884efaaa750d383e13e3c5f4"
 
 [[package]]
+name = "canoe"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.10.0",
+ "env_logger",
+ "freetype",
+ "log",
+ "memfd",
+ "memmap2",
+ "nix",
+ "regex",
+ "resvg",
+ "serde",
+ "tempfile",
+ "thiserror",
+ "toml",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols 0.32.10",
+ "wayland-protocols-wlr",
+ "wayland-scanner",
+ "xkbcommon",
+ "yeslogic-fontconfig-sys",
+]
+
+[[package]]
 name = "cc"
 version = "1.2.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -648,32 +674,6 @@ dependencies = [
  "unicode-ccc",
  "unicode-properties",
  "unicode-script",
-]
-
-[[package]]
-name = "rwm"
-version = "0.1.0"
-dependencies = [
- "bitflags 2.10.0",
- "env_logger",
- "freetype",
- "log",
- "memfd",
- "memmap2",
- "nix",
- "regex",
- "resvg",
- "serde",
- "tempfile",
- "thiserror",
- "toml",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols 0.32.10",
- "wayland-protocols-wlr",
- "wayland-scanner",
- "xkbcommon",
- "yeslogic-fontconfig-sys",
 ]
 
 [[package]]

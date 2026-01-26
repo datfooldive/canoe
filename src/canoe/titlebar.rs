@@ -348,7 +348,7 @@ impl Titlebar {
             // Create memfd for shared memory
             let memfd = match memfd::MemfdOptions::default()
                 .close_on_exec(true)
-                .create("rwm-titlebar")
+                .create("canoe-titlebar")
             {
                 Ok(fd) => fd,
                 Err(e) => {

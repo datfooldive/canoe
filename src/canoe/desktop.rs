@@ -82,7 +82,7 @@ impl DesktopSurface {
         let size = stride * self.height;
         let memfd = match memfd::MemfdOptions::default()
             .close_on_exec(true)
-            .create("rwm-desktop")
+            .create("canoe-desktop")
         {
             Ok(fd) => fd,
             Err(e) => {

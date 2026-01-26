@@ -220,7 +220,7 @@ impl WindowMenu {
         let size = stride * buffer_height;
         let memfd = match memfd::MemfdOptions::default()
             .close_on_exec(true)
-            .create("rwm-menu")
+            .create("canoe-menu")
         {
             Ok(fd) => fd,
             Err(e) => {

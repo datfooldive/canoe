@@ -82,7 +82,7 @@ impl ShieldSurface {
         let size = stride * self.height;
         let memfd = match memfd::MemfdOptions::default()
             .close_on_exec(true)
-            .create("rwm-shield")
+            .create("canoe-shield")
         {
             Ok(fd) => fd,
             Err(e) => {

@@ -357,7 +357,7 @@ fn parse_decoration(value: Option<String>) -> Option<WindowDecoration> {
 
 fn config_path() -> Option<PathBuf> {
     let home = dirs::home_dir()?;
-    Some(home.join(".config").join("rwm").join("rwm.toml"))
+    Some(home.join(".config").join("canoe").join("canoe.toml"))
 }
 
 fn rules_from_file(rules: Vec<RuleFile>) -> Vec<Rule> {
@@ -376,7 +376,7 @@ fn rules_from_file(rules: Vec<RuleFile>) -> Vec<Rule> {
         .collect()
 }
 
-/// Load config from ~/.config/rwm/rwm.toml and apply overrides to defaults.
+/// Load config from ~/.config/canoe/canoe.toml and apply overrides to defaults.
 pub fn load_config() -> Config {
     let mut config = Config::default();
     if let Some(path) = config_path() {

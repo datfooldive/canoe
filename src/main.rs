@@ -1,15 +1,15 @@
-//! RWM - River Window Manager in Rust
+//! Canoe - River Window Manager in Rust
 //!
 //! A tiling window manager for the River Wayland compositor.
 
 mod binding;
+mod canoe;
 mod config;
 mod protocol;
 mod rule;
-mod rwm;
 
+use canoe::Context;
 use protocol::*;
-use rwm::Context;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -58,7 +58,7 @@ const CLOSE_DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 fn attach_wl_seat(
     state: &mut AppState,
-    seat_ref: &Rc<RefCell<rwm::Seat>>,
+    seat_ref: &Rc<RefCell<canoe::Seat>>,
     qh: &QueueHandle<AppState>,
 ) {
     let wl_seat_name = seat_ref.borrow().wl_seat_name;
@@ -84,7 +84,7 @@ fn attach_wl_seat(
 
 fn attach_cursor_shape_device(
     state: &mut AppState,
-    seat_ref: &Rc<RefCell<rwm::Seat>>,
+    seat_ref: &Rc<RefCell<canoe::Seat>>,
     qh: &QueueHandle<AppState>,
 ) {
     let manager = match state.globals.cursor_shape_manager.as_ref() {
@@ -134,11 +134,11 @@ fn render_window_menu(state: &mut AppState, qh: &QueueHandle<AppState>) {
 
 fn open_window_menu(
     state: &mut AppState,
-    output_id: rwm::OutputId,
+    output_id: canoe::OutputId,
     pointer_x: i32,
     pointer_y: i32,
     centered: bool,
-    mode: rwm::WindowMenuMode,
+    mode: canoe::WindowMenuMode,
     qh: &QueueHandle<AppState>,
 ) {
     let (Some(compositor), Some(layer_shell)) = (
@@ -152,7 +152,7 @@ fn open_window_menu(
         let context = state.context.borrow();
         let items = context.collect_menu_items(output_id);
         let focused = context.focused_window;
-        let menu_theme = rwm::MenuTheme::from_ui(&context.config.ui);
+        let menu_theme = canoe::MenuTheme::from_ui(&context.config.ui);
         let info = context.outputs.get(&output_id).map(|output| {
             let out = output.borrow();
             (out.width, out.height, out.wl_output.clone())
@@ -173,12 +173,12 @@ fn open_window_menu(
         &surface,
         wl_output.as_ref(),
         wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer::Overlay,
-        "rwm-window-menu".to_string(),
+        "canoe-window-menu".to_string(),
         qh,
-        rwm::LayerSurfaceKind::Menu,
+        canoe::LayerSurfaceKind::Menu,
     );
 
-    let mut menu = rwm::WindowMenu::new(
+    let mut menu = canoe::WindowMenu::new(
         surface,
         layer_surface,
         output_id,
@@ -187,7 +187,7 @@ fn open_window_menu(
         pointer_y,
         menu_theme,
     );
-    if mode == rwm::WindowMenuMode::AltTab {
+    if mode == canoe::WindowMenuMode::AltTab {
         menu.select_window(focused_window);
     }
     let mut local_x = pointer_x.max(0);
@@ -228,7 +228,7 @@ fn open_window_menu(
 
 fn ensure_window_menu_shield(
     state: &mut AppState,
-    output_id: rwm::OutputId,
+    output_id: canoe::OutputId,
     qh: &QueueHandle<AppState>,
 ) {
     let (Some(compositor), Some(layer_shell)) = (
@@ -262,9 +262,9 @@ fn ensure_window_menu_shield(
         &surface,
         wl_output.as_ref(),
         wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer::Overlay,
-        "rwm-window-menu-shield".to_string(),
+        "canoe-window-menu-shield".to_string(),
         qh,
-        rwm::LayerSurfaceKind::MenuShield(output_id),
+        canoe::LayerSurfaceKind::MenuShield(output_id),
     );
 
     layer_surface.set_anchor(
@@ -281,7 +281,7 @@ fn ensure_window_menu_shield(
     surface.commit();
 
     state.context.borrow_mut().window_menu_shield =
-        Some(rwm::ShieldSurface::new(surface, layer_surface, output_id));
+        Some(canoe::ShieldSurface::new(surface, layer_surface, output_id));
 }
 
 fn request_manage_dirty(state: &AppState) {
@@ -292,7 +292,7 @@ fn request_manage_dirty(state: &AppState) {
 
 fn update_menu_hover_from_global(
     state: &mut AppState,
-    seat_id: rwm::SeatId,
+    seat_id: canoe::SeatId,
     qh: &QueueHandle<AppState>,
 ) {
     let (px, py) = {
@@ -306,7 +306,7 @@ fn update_menu_hover_from_global(
 
     let changed = {
         let mut context = state.context.borrow_mut();
-        if context.window_menu_mode != Some(rwm::WindowMenuMode::Pointer) {
+        if context.window_menu_mode != Some(canoe::WindowMenuMode::Pointer) {
             return;
         }
         let (output_id, origin_x, origin_y) = {
@@ -337,14 +337,14 @@ fn update_menu_hover_from_global(
 
 fn update_menu_hover_from_surface(
     state: &mut AppState,
-    output_id: rwm::OutputId,
+    output_id: canoe::OutputId,
     surface_x: f64,
     surface_y: f64,
     qh: &QueueHandle<AppState>,
 ) {
     let changed = {
         let mut context = state.context.borrow_mut();
-        if context.window_menu_mode != Some(rwm::WindowMenuMode::Pointer) {
+        if context.window_menu_mode != Some(canoe::WindowMenuMode::Pointer) {
             return;
         }
         let Some(menu) = context.window_menu.as_mut() else {
@@ -365,7 +365,7 @@ fn update_menu_hover_from_surface(
 
 fn update_titlebar_hover_from_surface(
     state: &mut AppState,
-    window_id: rwm::WindowId,
+    window_id: canoe::WindowId,
     surface_x: f64,
     surface_y: f64,
 ) -> bool {
@@ -373,7 +373,7 @@ fn update_titlebar_hover_from_surface(
     let local_y = surface_y.round() as i32;
     let (border_width, titlebar_height) = {
         let ui = &state.context.borrow().config.ui;
-        (ui.border_width, rwm::titlebar::titlebar_height(ui))
+        (ui.border_width, canoe::titlebar::titlebar_height(ui))
     };
     let context = state.context.borrow();
     let Some(window) = context.windows.get(&window_id) else {
@@ -381,7 +381,7 @@ fn update_titlebar_hover_from_surface(
     };
     let mut w = window.borrow_mut();
     let new_hover =
-        rwm::titlebar::button_at(w.width, border_width, local_x, local_y, titlebar_height);
+        canoe::titlebar::button_at(w.width, border_width, local_x, local_y, titlebar_height);
     if w.titlebar_hovered == new_hover {
         return false;
     }
@@ -391,7 +391,7 @@ fn update_titlebar_hover_from_surface(
 
 fn update_titlebar_hover_from_global(
     state: &mut AppState,
-    window_id: rwm::WindowId,
+    window_id: canoe::WindowId,
     pointer_x: i32,
     pointer_y: i32,
 ) -> bool {
@@ -406,7 +406,7 @@ fn update_titlebar_hover_from_global(
 
     let (border_width, titlebar_height) = {
         let ui = &state.context.borrow().config.ui;
-        (ui.border_width, rwm::titlebar::titlebar_height(ui))
+        (ui.border_width, canoe::titlebar::titlebar_height(ui))
     };
     let origin_x = win_x - border_width;
     let origin_y = win_y - border_width - titlebar_height + swallow_top;
@@ -419,7 +419,7 @@ fn update_titlebar_hover_from_global(
     };
     let mut w = window.borrow_mut();
     let new_hover =
-        rwm::titlebar::button_at(win_w, border_width, local_x, local_y, titlebar_height);
+        canoe::titlebar::button_at(win_w, border_width, local_x, local_y, titlebar_height);
     if w.titlebar_hovered == new_hover {
         return false;
     }
@@ -427,7 +427,7 @@ fn update_titlebar_hover_from_global(
     true
 }
 
-fn clear_titlebar_state(state: &mut AppState, window_id: rwm::WindowId) -> bool {
+fn clear_titlebar_state(state: &mut AppState, window_id: canoe::WindowId) -> bool {
     let context = state.context.borrow();
     let Some(window) = context.windows.get(&window_id) else {
         return false;
@@ -448,7 +448,7 @@ fn handle_window_menu_cycle(state: &mut AppState, qh: &QueueHandle<AppState>) {
 
     {
         let mut context = state.context.borrow_mut();
-        let is_alt_tab = context.window_menu_mode == Some(rwm::WindowMenuMode::AltTab);
+        let is_alt_tab = context.window_menu_mode == Some(canoe::WindowMenuMode::AltTab);
         if let Some(menu) = context.window_menu.as_mut() {
             if is_alt_tab {
                 if menu.select_next() {
@@ -490,13 +490,13 @@ fn handle_window_menu_cycle(state: &mut AppState, qh: &QueueHandle<AppState>) {
         0,
         0,
         true,
-        rwm::WindowMenuMode::AltTab,
+        canoe::WindowMenuMode::AltTab,
         qh,
     );
     ensure_window_menu_shield(state, output_id, qh);
 }
 
-fn handle_window_menu_commit(state: &mut AppState, seat_id: rwm::SeatId) {
+fn handle_window_menu_commit(state: &mut AppState, seat_id: canoe::SeatId) {
     let Some(seat) = state.context.borrow().seats.get(&seat_id).cloned() else {
         return;
     };
@@ -506,7 +506,7 @@ fn handle_window_menu_commit(state: &mut AppState, seat_id: rwm::SeatId) {
 
 fn ensure_desktop_surface(
     state: &mut AppState,
-    output_id: rwm::OutputId,
+    output_id: canoe::OutputId,
     qh: &QueueHandle<AppState>,
 ) {
     let (Some(compositor), Some(layer_shell)) = (
@@ -534,9 +534,9 @@ fn ensure_desktop_surface(
         &surface,
         wl_output.as_ref(),
         wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer::Background,
-        "rwm-desktop".to_string(),
+        "canoe-desktop".to_string(),
         qh,
-        rwm::LayerSurfaceKind::Desktop(output_id),
+        canoe::LayerSurfaceKind::Desktop(output_id),
     );
 
     layer_surface.set_anchor(
@@ -552,8 +552,11 @@ fn ensure_desktop_surface(
     layer_surface.set_size(0, 0);
     surface.commit();
 
-    output.borrow_mut().desktop_surface =
-        Some(rwm::DesktopSurface::new(surface, layer_surface, output_id));
+    output.borrow_mut().desktop_surface = Some(canoe::DesktopSurface::new(
+        surface,
+        layer_surface,
+        output_id,
+    ));
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
@@ -744,7 +747,7 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
 
                                 // Position decoration so it sits above content with borders
                                 let border_width = ui.border_width;
-                                let titlebar_height = rwm::titlebar::titlebar_height(ui);
+                                let titlebar_height = canoe::titlebar::titlebar_height(ui);
                                 titlebar.set_offset(
                                     -border_width,
                                     -border_width - titlebar_height + swallow_top,
@@ -782,7 +785,7 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                         id.get_decoration_above(&surface, qh, window_id);
 
                     // Create titlebar
-                    let titlebar = rwm::Titlebar::new(surface, decoration);
+                    let titlebar = canoe::Titlebar::new(surface, decoration);
                     window.borrow_mut().titlebar = Some(titlebar);
 
                     log::info!("Created titlebar for window {}", window_id);
@@ -794,7 +797,7 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                 }
 
                 // Queue init event
-                window.borrow_mut().queue_event(rwm::WindowEvent::Init);
+                window.borrow_mut().queue_event(canoe::WindowEvent::Init);
             }
             Event::Output { id } => {
                 let output = state.context.borrow_mut().create_output(id.clone());
@@ -927,12 +930,12 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
 }
 
 // Implement dispatch for River Window
-impl Dispatch<RiverWindowV1, rwm::WindowId> for AppState {
+impl Dispatch<RiverWindowV1, canoe::WindowId> for AppState {
     fn event(
         state: &mut Self,
         proxy: &RiverWindowV1,
         event: river_window_management_v1::client::river_window_v1::Event,
-        _window_id: &rwm::WindowId, // Don't use this - it's always 0 from event_created_child
+        _window_id: &canoe::WindowId, // Don't use this - it's always 0 from event_created_child
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
@@ -1047,7 +1050,7 @@ impl Dispatch<RiverWindowV1, rwm::WindowId> for AppState {
                 }) {
                     window
                         .borrow_mut()
-                        .queue_event(rwm::WindowEvent::Move(Rc::downgrade(seat_rc)));
+                        .queue_event(canoe::WindowEvent::Move(Rc::downgrade(seat_rc)));
                 }
             }
             Event::PointerResizeRequested { seat, edges } => {
@@ -1065,9 +1068,10 @@ impl Dispatch<RiverWindowV1, rwm::WindowId> for AppState {
                     } else {
                         0
                     };
-                    window
-                        .borrow_mut()
-                        .queue_event(rwm::WindowEvent::Resize(Rc::downgrade(seat_rc), edges_u32));
+                    window.borrow_mut().queue_event(canoe::WindowEvent::Resize(
+                        Rc::downgrade(seat_rc),
+                        edges_u32,
+                    ));
                 }
             }
             Event::FullscreenRequested { output } => {
@@ -1089,23 +1093,27 @@ impl Dispatch<RiverWindowV1, rwm::WindowId> for AppState {
                 });
                 window
                     .borrow_mut()
-                    .queue_event(rwm::WindowEvent::Fullscreen(output_weak));
+                    .queue_event(canoe::WindowEvent::Fullscreen(output_weak));
             }
             Event::ExitFullscreenRequested => {
                 window
                     .borrow_mut()
-                    .queue_event(rwm::WindowEvent::Unfullscreen);
+                    .queue_event(canoe::WindowEvent::Unfullscreen);
             }
             Event::MaximizeRequested => {
-                window.borrow_mut().queue_event(rwm::WindowEvent::Maximize);
+                window
+                    .borrow_mut()
+                    .queue_event(canoe::WindowEvent::Maximize);
             }
             Event::UnmaximizeRequested => {
                 window
                     .borrow_mut()
-                    .queue_event(rwm::WindowEvent::Unmaximize);
+                    .queue_event(canoe::WindowEvent::Unmaximize);
             }
             Event::MinimizeRequested => {
-                window.borrow_mut().queue_event(rwm::WindowEvent::Minimize);
+                window
+                    .borrow_mut()
+                    .queue_event(canoe::WindowEvent::Minimize);
             }
             _ => {}
         }
@@ -1113,12 +1121,12 @@ impl Dispatch<RiverWindowV1, rwm::WindowId> for AppState {
 }
 
 // Implement dispatch for River Node
-impl Dispatch<RiverNodeV1, rwm::WindowId> for AppState {
+impl Dispatch<RiverNodeV1, canoe::WindowId> for AppState {
     fn event(
         _state: &mut Self,
         _proxy: &RiverNodeV1,
         _event: river_window_management_v1::client::river_node_v1::Event,
-        _data: &rwm::WindowId,
+        _data: &canoe::WindowId,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
@@ -1127,12 +1135,12 @@ impl Dispatch<RiverNodeV1, rwm::WindowId> for AppState {
 }
 
 // Implement dispatch for River Output
-impl Dispatch<RiverOutputV1, rwm::OutputId> for AppState {
+impl Dispatch<RiverOutputV1, canoe::OutputId> for AppState {
     fn event(
         state: &mut Self,
         _proxy: &RiverOutputV1,
         event: river_window_management_v1::client::river_output_v1::Event,
-        output_id: &rwm::OutputId,
+        output_id: &canoe::OutputId,
         _conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
@@ -1173,12 +1181,12 @@ impl Dispatch<RiverOutputV1, rwm::OutputId> for AppState {
 }
 
 // Implement dispatch for River Seat
-impl Dispatch<RiverSeatV1, rwm::SeatId> for AppState {
+impl Dispatch<RiverSeatV1, canoe::SeatId> for AppState {
     fn event(
         state: &mut Self,
         _proxy: &RiverSeatV1,
         event: river_window_management_v1::client::river_seat_v1::Event,
-        seat_id: &rwm::SeatId,
+        seat_id: &canoe::SeatId,
         _conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
@@ -1299,12 +1307,12 @@ impl Dispatch<RiverSeatV1, rwm::SeatId> for AppState {
 }
 
 // Implement dispatch for wlr layer surfaces (desktop/menu)
-impl Dispatch<ZwlrLayerSurfaceV1, rwm::LayerSurfaceKind> for AppState {
+impl Dispatch<ZwlrLayerSurfaceV1, canoe::LayerSurfaceKind> for AppState {
     fn event(
         state: &mut Self,
         proxy: &ZwlrLayerSurfaceV1,
         event: wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Event,
-        kind: &rwm::LayerSurfaceKind,
+        kind: &canoe::LayerSurfaceKind,
         _conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
@@ -1318,7 +1326,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, rwm::LayerSurfaceKind> for AppState {
             } => {
                 proxy.ack_configure(serial);
                 match kind {
-                    rwm::LayerSurfaceKind::Desktop(output_id) => {
+                    canoe::LayerSurfaceKind::Desktop(output_id) => {
                         let output = {
                             let context = state.context.borrow();
                             context.outputs.get(output_id).cloned()
@@ -1345,7 +1353,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, rwm::LayerSurfaceKind> for AppState {
                             desktop.commit();
                         }
                     }
-                    rwm::LayerSurfaceKind::Menu => {
+                    canoe::LayerSurfaceKind::Menu => {
                         let mut context = state.context.borrow_mut();
                         let Some(menu) = context.window_menu.as_mut() else {
                             return;
@@ -1362,7 +1370,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, rwm::LayerSurfaceKind> for AppState {
                         drop(context);
                         render_window_menu(state, qh);
                     }
-                    rwm::LayerSurfaceKind::MenuShield(output_id) => {
+                    canoe::LayerSurfaceKind::MenuShield(output_id) => {
                         let mut context = state.context.borrow_mut();
                         let Some(shield) = context.window_menu_shield.as_mut() else {
                             return;
@@ -1392,15 +1400,15 @@ impl Dispatch<ZwlrLayerSurfaceV1, rwm::LayerSurfaceKind> for AppState {
                 }
             }
             Event::Closed => match kind {
-                rwm::LayerSurfaceKind::Desktop(output_id) => {
+                canoe::LayerSurfaceKind::Desktop(output_id) => {
                     if let Some(output) = state.context.borrow().outputs.get(output_id) {
                         output.borrow_mut().desktop_surface = None;
                     }
                 }
-                rwm::LayerSurfaceKind::Menu => {
+                canoe::LayerSurfaceKind::Menu => {
                     state.context.borrow_mut().close_window_menu();
                 }
-                rwm::LayerSurfaceKind::MenuShield(output_id) => {
+                canoe::LayerSurfaceKind::MenuShield(output_id) => {
                     if let Some(shield) = state.context.borrow().window_menu_shield.as_ref() {
                         if shield.output_id == *output_id {
                             state.context.borrow_mut().window_menu_shield = None;
@@ -1427,12 +1435,12 @@ impl Dispatch<RiverLayerShellV1, ()> for AppState {
     }
 }
 
-impl Dispatch<RiverLayerShellOutputV1, rwm::OutputId> for AppState {
+impl Dispatch<RiverLayerShellOutputV1, canoe::OutputId> for AppState {
     fn event(
         state: &mut Self,
         _proxy: &RiverLayerShellOutputV1,
         event: river_layer_shell_v1::client::river_layer_shell_output_v1::Event,
-        output_id: &rwm::OutputId,
+        output_id: &canoe::OutputId,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
@@ -1454,12 +1462,12 @@ impl Dispatch<RiverLayerShellOutputV1, rwm::OutputId> for AppState {
     }
 }
 
-impl Dispatch<RiverLayerShellSeatV1, rwm::SeatId> for AppState {
+impl Dispatch<RiverLayerShellSeatV1, canoe::SeatId> for AppState {
     fn event(
         state: &mut Self,
         _proxy: &RiverLayerShellSeatV1,
         event: river_layer_shell_v1::client::river_layer_shell_seat_v1::Event,
-        seat_id: &rwm::SeatId,
+        seat_id: &canoe::SeatId,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
@@ -1492,12 +1500,12 @@ impl Dispatch<RiverXkbBindingsV1, ()> for AppState {
     }
 }
 
-impl Dispatch<RiverXkbBindingV1, (rwm::SeatId, usize)> for AppState {
+impl Dispatch<RiverXkbBindingV1, (canoe::SeatId, usize)> for AppState {
     fn event(
         state: &mut Self,
         _proxy: &RiverXkbBindingV1,
         event: river_xkb_bindings_v1::client::river_xkb_binding_v1::Event,
-        (seat_id, binding_idx): &(rwm::SeatId, usize),
+        (seat_id, binding_idx): &(canoe::SeatId, usize),
         _conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
@@ -1562,12 +1570,12 @@ impl Dispatch<RiverXkbBindingV1, (rwm::SeatId, usize)> for AppState {
 }
 
 // Implement dispatch for Pointer bindings
-impl Dispatch<RiverPointerBindingV1, (rwm::SeatId, usize)> for AppState {
+impl Dispatch<RiverPointerBindingV1, (canoe::SeatId, usize)> for AppState {
     fn event(
         state: &mut Self,
         _proxy: &RiverPointerBindingV1,
         event: river_window_management_v1::client::river_pointer_binding_v1::Event,
-        (seat_id, binding_idx): &(rwm::SeatId, usize),
+        (seat_id, binding_idx): &(canoe::SeatId, usize),
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
@@ -1752,12 +1760,12 @@ impl Dispatch<wl_seat::WlSeat, u32> for AppState {
     }
 }
 
-impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
+impl Dispatch<wl_pointer::WlPointer, canoe::SeatId> for AppState {
     fn event(
         state: &mut Self,
         _proxy: &wl_pointer::WlPointer,
         event: wl_pointer::Event,
-        seat_id: &rwm::SeatId,
+        seat_id: &canoe::SeatId,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
@@ -1774,7 +1782,7 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                     surface_y,
                 } => {
                     let wl_pointer = seat.borrow().wl_pointer.clone();
-                    let mut target = rwm::PointerTarget::None;
+                    let mut target = canoe::PointerTarget::None;
                     let mut titlebar_window = None;
 
                     let surface_pos = (surface_x.round() as i32, surface_y.round() as i32);
@@ -1782,12 +1790,12 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                         let mut context = state.context.borrow_mut();
                         if let Some(shield) = context.window_menu_shield.as_ref() {
                             if shield.surface == surface {
-                                target = rwm::PointerTarget::MenuShield(shield.output_id);
+                                target = canoe::PointerTarget::MenuShield(shield.output_id);
                             }
                         }
                         if let Some(menu) = context.window_menu.as_mut() {
                             if menu.surface == surface {
-                                target = rwm::PointerTarget::Menu;
+                                target = canoe::PointerTarget::Menu;
                                 let changed =
                                     context.update_menu_hover(surface_pos.0, surface_pos.1);
                                 if changed {
@@ -1798,12 +1806,12 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                         }
                     }
 
-                    if target == rwm::PointerTarget::None {
+                    if target == canoe::PointerTarget::None {
                         let context = state.context.borrow();
                         for (&window_id, window) in &context.windows {
                             if let Some(titlebar) = window.borrow().titlebar.as_ref() {
                                 if titlebar.surface == surface {
-                                    target = rwm::PointerTarget::Titlebar(window_id);
+                                    target = canoe::PointerTarget::Titlebar(window_id);
                                     titlebar_window = Some(window_id);
                                     break;
                                 }
@@ -1811,12 +1819,12 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                         }
                     }
 
-                    if target == rwm::PointerTarget::None {
+                    if target == canoe::PointerTarget::None {
                         let context = state.context.borrow();
                         for (output_id, output) in &context.outputs {
                             if let Some(desktop) = output.borrow().desktop_surface.as_ref() {
                                 if desktop.surface == surface {
-                                    target = rwm::PointerTarget::Desktop(*output_id);
+                                    target = canoe::PointerTarget::Desktop(*output_id);
                                     break;
                                 }
                             }
@@ -1830,7 +1838,7 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                         seat_ref.last_surface_x = surface_pos.0;
                         seat_ref.last_surface_y = surface_pos.1;
                     }
-                    if matches!(target, rwm::PointerTarget::MenuShield(_)) {
+                    if matches!(target, canoe::PointerTarget::MenuShield(_)) {
                         if let Some(pointer) = wl_pointer.as_ref() {
                             pointer.set_cursor(serial, None, 0, 0);
                         }
@@ -1848,14 +1856,14 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                 }
                 wl_pointer::Event::Leave { serial, .. } => {
                     let prev_target = seat.borrow().pointer_target;
-                    if let rwm::PointerTarget::Titlebar(window_id) = prev_target {
+                    if let canoe::PointerTarget::Titlebar(window_id) = prev_target {
                         if clear_titlebar_state(state, window_id) {
                             request_manage_dirty(state);
                         }
                     }
                     let mut seat = seat.borrow_mut();
                     seat.pointer_enter_serial = serial;
-                    seat.pointer_target = rwm::PointerTarget::None;
+                    seat.pointer_target = canoe::PointerTarget::None;
                     seat.cursor_shape = None;
                 }
                 wl_pointer::Event::Motion {
@@ -1869,7 +1877,7 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                         seat_ref.last_surface_y = surface_y.round() as i32;
                     }
                     let target = seat.borrow().pointer_target;
-                    if target == rwm::PointerTarget::Menu {
+                    if target == canoe::PointerTarget::Menu {
                         let changed = state
                             .context
                             .borrow_mut()
@@ -1877,11 +1885,11 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                         if changed {
                             render_window_menu(state, _qh);
                         }
-                    } else if let rwm::PointerTarget::Desktop(output_id)
-                    | rwm::PointerTarget::MenuShield(output_id) = target
+                    } else if let canoe::PointerTarget::Desktop(output_id)
+                    | canoe::PointerTarget::MenuShield(output_id) = target
                     {
                         update_menu_hover_from_surface(state, output_id, surface_x, surface_y, _qh);
-                    } else if let rwm::PointerTarget::Titlebar(window_id) = target {
+                    } else if let canoe::PointerTarget::Titlebar(window_id) = target {
                         let changed = update_titlebar_hover_from_surface(
                             state, window_id, surface_x, surface_y,
                         );
@@ -1896,12 +1904,12 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                     ..
                 } => {
                     let target = seat.borrow().pointer_target;
-                    if matches!(target, rwm::PointerTarget::MenuShield(_)) {
+                    if matches!(target, canoe::PointerTarget::MenuShield(_)) {
                         return;
                     }
                     match btn_state {
                         wayland_client::WEnum::Value(wl_pointer::ButtonState::Pressed) => {
-                            if target != rwm::PointerTarget::Menu {
+                            if target != canoe::PointerTarget::Menu {
                                 let mut context = state.context.borrow_mut();
                                 if context.window_menu.is_some() {
                                     context.close_window_menu();
@@ -1910,7 +1918,7 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                                 }
                             }
                             match target {
-                                rwm::PointerTarget::Desktop(output_id) => {
+                                canoe::PointerTarget::Desktop(output_id) => {
                                     if button == crate::config::button::RIGHT {
                                         let (px, py) = {
                                             let seat_ref = seat.borrow();
@@ -1927,18 +1935,18 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                                             px,
                                             py,
                                             false,
-                                            rwm::WindowMenuMode::Pointer,
+                                            canoe::WindowMenuMode::Pointer,
                                             _qh,
                                         );
                                         update_menu_hover_from_global(state, *seat_id, _qh);
                                         seat.borrow_mut().menu_click_button = Some(button);
                                     }
                                 }
-                                rwm::PointerTarget::Menu => {
+                                canoe::PointerTarget::Menu => {
                                     seat.borrow_mut().menu_click_button = Some(button);
                                 }
-                                rwm::PointerTarget::MenuShield(_) => {}
-                                rwm::PointerTarget::Titlebar(window_id) => {
+                                canoe::PointerTarget::MenuShield(_) => {}
+                                canoe::PointerTarget::Titlebar(window_id) => {
                                     if button == crate::config::button::LEFT {
                                         let (px, py) = {
                                             let seat_ref = seat.borrow();
@@ -1963,11 +1971,11 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                                         }
                                     }
                                 }
-                                rwm::PointerTarget::None => {}
+                                canoe::PointerTarget::None => {}
                             }
                         }
                         wayland_client::WEnum::Value(wl_pointer::ButtonState::Released) => {
-                            if let rwm::PointerTarget::Titlebar(window_id) = target {
+                            if let canoe::PointerTarget::Titlebar(window_id) = target {
                                 if button == crate::config::button::LEFT {
                                     let (px, py) = {
                                         let seat_ref = seat.borrow();
@@ -1997,7 +2005,7 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                                     }
 
                                     match action {
-                                        Some(rwm::titlebar::TitlebarButton::Close) => {
+                                        Some(canoe::titlebar::TitlebarButton::Close) => {
                                             let now = Instant::now();
                                             let should_close = {
                                                 let mut seat_ref = seat.borrow_mut();
@@ -2018,35 +2026,35 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                                                 {
                                                     window
                                                         .borrow_mut()
-                                                        .queue_event(rwm::WindowEvent::Close);
+                                                        .queue_event(canoe::WindowEvent::Close);
                                                     request_manage_dirty(state);
                                                 }
                                             }
                                         }
-                                        Some(rwm::titlebar::TitlebarButton::Hide) => {
+                                        Some(canoe::titlebar::TitlebarButton::Hide) => {
                                             seat.borrow_mut().last_close_click = None;
                                             if let Some(window) =
                                                 state.context.borrow().windows.get(&window_id)
                                             {
                                                 window
                                                     .borrow_mut()
-                                                    .queue_event(rwm::WindowEvent::Minimize);
+                                                    .queue_event(canoe::WindowEvent::Minimize);
                                                 request_manage_dirty(state);
                                             }
                                         }
-                                        Some(rwm::titlebar::TitlebarButton::Maximize) => {
+                                        Some(canoe::titlebar::TitlebarButton::Maximize) => {
                                             seat.borrow_mut().last_close_click = None;
                                             if let Some(window) =
                                                 state.context.borrow().windows.get(&window_id)
                                             {
                                                 if window.borrow().maximized {
-                                                    window
-                                                        .borrow_mut()
-                                                        .queue_event(rwm::WindowEvent::Unmaximize);
+                                                    window.borrow_mut().queue_event(
+                                                        canoe::WindowEvent::Unmaximize,
+                                                    );
                                                 } else {
                                                     window
                                                         .borrow_mut()
-                                                        .queue_event(rwm::WindowEvent::Maximize);
+                                                        .queue_event(canoe::WindowEvent::Maximize);
                                                 }
                                                 request_manage_dirty(state);
                                             }
@@ -2070,7 +2078,7 @@ impl Dispatch<wl_pointer::WlPointer, rwm::SeatId> for AppState {
                                         .and_then(|menu| menu.hovered)
                                         .is_some();
                                     if context.window_menu_mode
-                                        == Some(rwm::WindowMenuMode::Pointer)
+                                        == Some(canoe::WindowMenuMode::Pointer)
                                     {
                                         if hovered {
                                             (true, false)
@@ -2131,7 +2139,7 @@ impl Dispatch<WpCursorShapeDeviceV1, ()> for AppState {
 // Titlebar surface user data
 struct TitlebarSurfaceData {
     #[allow(dead_code)]
-    window_id: rwm::WindowId,
+    window_id: canoe::WindowId,
 }
 
 impl Dispatch<wl_surface::WlSurface, TitlebarSurfaceData> for AppState {
@@ -2204,12 +2212,12 @@ impl Dispatch<wl_output::WlOutput, ()> for AppState {
     }
 }
 
-impl Dispatch<RiverDecorationV1, rwm::WindowId> for AppState {
+impl Dispatch<RiverDecorationV1, canoe::WindowId> for AppState {
     fn event(
         _state: &mut Self,
         _proxy: &RiverDecorationV1,
         _event: river_window_management_v1::client::river_decoration_v1::Event,
-        _data: &rwm::WindowId,
+        _data: &canoe::WindowId,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
@@ -2221,7 +2229,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    log::info!("RWM - River Window Manager starting");
+    log::info!("Canoe - River Window Manager starting");
 
     // Connect to Wayland display
     let conn = Connection::connect_to_env()?;
@@ -2265,7 +2273,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         state.context.borrow().spawn(cmd);
     }
 
-    log::info!("RWM initialized, entering main loop");
+    log::info!("Canoe initialized, entering main loop");
 
     // Main event loop
     while state.context.borrow().running {
@@ -2338,6 +2346,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    log::info!("RWM shutting down");
+    log::info!("Canoe shutting down");
     Ok(())
 }

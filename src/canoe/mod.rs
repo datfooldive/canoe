@@ -1,4 +1,4 @@
-//! RWM - River Window Manager core modules
+//! Canoe - River Window Manager core modules
 
 mod context;
 mod desktop;

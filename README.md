@@ -1,4 +1,4 @@
-# RWM - River Window Manager
+# Canoe - River Window Manager
 
 A stacking window manager for the River Wayland compositor, written in Rust.
 
@@ -11,12 +11,12 @@ cargo build --release
 ## Running
 
 ```bash
-river -c ./target/release/rwm
+river -c ./target/release/canoe
 ```
 
 For debug output:
 ```bash
-RUST_LOG=info river -c ./target/release/rwm
+RUST_LOG=info river -c ./target/release/canoe
 ```
 
 ## Keyboard Shortcuts
@@ -26,7 +26,7 @@ RUST_LOG=info river -c ./target/release/rwm
 | `Alt+Shift+Return` | Open terminal (foot) |
 | `Alt+Space` | Open application launcher (fuzzel) |
 | `Alt+Shift+c` | Close focused window |
-| `Alt+Shift+q` | Quit RWM |
+| `Alt+Shift+q` | Quit Canoe |
 | `Alt+Tab` | Focus next window |
 | `Alt+Shift+Tab` | Focus previous window |
 | `Alt+f` | Toggle fullscreen |

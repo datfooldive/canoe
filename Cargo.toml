@@ -1,8 +1,8 @@
 [package]
-name = "rwm"
+name = "canoe"
 version = "0.1.0"
 edition = "2021"
-description = "A River window manager implementation in Rust"
+description = "Canoe, a River window manager implementation in Rust"
 license = "MIT"
 
 [dependencies]
@@ -49,7 +49,7 @@ wayland-scanner = "0.31"
 tempfile = "3"
 
 [[bin]]
-name = "rwm"
+name = "canoe"
 path = "src/main.rs"
 
 [profile.release]
