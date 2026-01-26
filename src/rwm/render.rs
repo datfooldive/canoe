@@ -1,5 +1,7 @@
 use resvg::tiny_skia;
 
+use super::font;
+
 pub struct Renderer<'a> {
     pixmap: tiny_skia::PixmapMut<'a>,
 }
@@ -136,6 +138,126 @@ impl<'a> Renderer<'a> {
             }
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_text(
+        &mut self,
+        text: &str,
+        origin_x: i32,
+        origin_y: i32,
+        area_width: i32,
+        area_height: i32,
+        scale: i32,
+        text_argb: u32,
+        font_size: f32,
+        font_name: Option<&str>,
+        padding_x: i32,
+    ) {
+        if text.is_empty() || area_width <= 0 || area_height <= 0 {
+            return;
+        }
+
+        let origin_y = origin_y + 1;
+        let size_px = (font_size * scale.max(1) as f32).round().max(1.0) as u32;
+        let buffer_width = self.width();
+        let buffer_height = self.height();
+        let padding_x = padding_x.max(0);
+
+        let pixels = self.data_mut();
+        let _ = font::with_face(font_name, size_px, |face| {
+            let metrics = match face.line_metrics() {
+                Some(metrics) => metrics,
+                None => return,
+            };
+
+            let line_height = (metrics.ascender - metrics.descender).max(1);
+            let baseline_y = origin_y + (area_height - line_height) / 2 + metrics.ascender;
+
+            let mut x_pos = origin_x + padding_x;
+            let max_x = origin_x + area_width - padding_x;
+
+            for ch in text.chars() {
+                let glyph = match face.load_char(ch) {
+                    Some(glyph) => glyph,
+                    None => continue,
+                };
+                let advance = glyph.advance;
+                if x_pos + advance > max_x {
+                    break;
+                }
+
+                let width = glyph.width;
+                let rows = glyph.rows;
+                if width <= 0 || rows <= 0 {
+                    x_pos += advance;
+                    continue;
+                }
+
+                let pitch = glyph.pitch;
+                let abs_pitch = pitch.abs();
+                let glyph_x = x_pos + glyph.left;
+                let glyph_y = baseline_y - glyph.top;
+
+                for row in 0..rows {
+                    let row_offset = if pitch < 0 {
+                        (rows - 1 - row) * abs_pitch
+                    } else {
+                        row * abs_pitch
+                    } as usize;
+                    for col in 0..width {
+                        let px = glyph_x + col;
+                        let py = glyph_y + row;
+
+                        if px >= origin_x
+                            && px < origin_x + area_width
+                            && py >= origin_y
+                            && py < origin_y + area_height
+                            && px >= 0
+                            && px < buffer_width
+                            && py >= 0
+                            && py < buffer_height
+                        {
+                            let idx = row_offset + col as usize;
+                            if idx >= glyph.buffer.len() {
+                                continue;
+                            }
+                            let alpha = glyph.buffer[idx];
+                            if alpha > 0 {
+                                let offset = ((py * buffer_width + px) * 4) as usize;
+                                if offset + 4 <= pixels.len() {
+                                    blend_pixel(&mut pixels[offset..offset + 4], text_argb, alpha);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                x_pos += advance;
+            }
+        });
+    }
+}
+
+fn blend_pixel(bg: &mut [u8], fg_argb: u32, alpha: u8) {
+    let fg_a = ((fg_argb >> 24) & 0xff) as u16;
+    let fg_r = ((fg_argb >> 16) & 0xff) as u16;
+    let fg_g = ((fg_argb >> 8) & 0xff) as u16;
+    let fg_b = (fg_argb & 0xff) as u16;
+
+    let a = (alpha as u16 * fg_a) / 255;
+    let inv_a = 255 - a;
+
+    let bg_val = u32::from_ne_bytes([bg[0], bg[1], bg[2], bg[3]]);
+    let bg_r = ((bg_val >> 16) & 0xff) as u16;
+    let bg_g = ((bg_val >> 8) & 0xff) as u16;
+    let bg_b = (bg_val & 0xff) as u16;
+
+    let out_r = ((fg_r * a + bg_r * inv_a) / 255) as u8;
+    let out_g = ((fg_g * a + bg_g * inv_a) / 255) as u8;
+    let out_b = ((fg_b * a + bg_b * inv_a) / 255) as u8;
+
+    let out_argb = 0xFF000000 | ((out_r as u32) << 16) | ((out_g as u32) << 8) | (out_b as u32);
+    bg.copy_from_slice(&out_argb.to_ne_bytes());
 }
 
 /// Alpha blend a premultiplied RGBA source over an ARGB destination.
