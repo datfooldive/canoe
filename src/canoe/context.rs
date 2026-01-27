@@ -34,6 +34,7 @@ pub struct Context {
     // Focus management
     pub focus_stack: Vec<WindowId>,
     pub focused_window: Option<WindowId>,
+    last_focused_output: Option<OutputId>,
 
     // Current state
     pub current_output: Option<OutputId>,
@@ -78,6 +79,7 @@ impl Context {
 
             focus_stack: Vec::new(),
             focused_window: None,
+            last_focused_output: None,
 
             current_output: None,
             current_seat: None,
@@ -110,8 +112,9 @@ impl Context {
         let mut window = Window::new(id);
         window.rwm_window = Some(rwm_window);
 
-        // Assign to current output if available
-        if let Some(output_id) = self.current_output {
+        // Assign to the preferred output for new windows.
+        let output_id = self.current_output_for_new_window();
+        if let Some(output_id) = output_id {
             if let Some(output) = self.outputs.get(&output_id) {
                 window.output = Some(Rc::downgrade(output));
             }
@@ -261,6 +264,11 @@ impl Context {
             if let Some(seat) = self.seats.get(&seat_id) {
                 seat.borrow().focus_window(&window.borrow());
             }
+        }
+
+        self.update_window_output_from_position(window_id);
+        if let Some(output_id) = self.output_for_window_id(window_id) {
+            self.set_window_output(window_id, output_id);
         }
     }
 
@@ -570,12 +578,7 @@ impl Context {
         };
 
         let target_output_id = output_ids[next_idx];
-        if let Some(target_output) = self.outputs.get(&target_output_id) {
-            if let Some(window) = self.windows.get(&window_id) {
-                let mut w = window.borrow_mut();
-                w.output = Some(Rc::downgrade(target_output));
-            }
-        }
+        self.set_window_output(window_id, target_output_id);
 
         // Rearrange both outputs
         if let Some(current_id) = self.current_output {
@@ -590,6 +593,9 @@ impl Context {
                 return;
             };
             let w = window.borrow();
+            if w.position_undefined || w.width <= 0 || w.height <= 0 {
+                return;
+            }
             let current_output_id = w
                 .output
                 .as_ref()
@@ -607,12 +613,7 @@ impl Context {
             return;
         }
 
-        if let (Some(window), Some(new_output)) = (
-            self.windows.get(&window_id),
-            self.outputs.get(&new_output_id),
-        ) {
-            window.borrow_mut().output = Some(Rc::downgrade(new_output));
-        }
+        self.set_window_output(window_id, new_output_id);
     }
 
     pub(crate) fn update_window_output_from_pointer(
@@ -633,7 +634,7 @@ impl Context {
             return;
         };
 
-        let mut w = window.borrow_mut();
+        let w = window.borrow();
         let is_move = match &w.operator {
             super::window::Operator::Move { seat, .. } => {
                 seat.as_ref()
@@ -655,8 +656,14 @@ impl Context {
             return;
         }
 
-        if let Some(new_output) = self.outputs.get(&output_id) {
-            w.output = Some(Rc::downgrade(new_output));
+        drop(w);
+        self.set_window_output(window_id, output_id);
+    }
+
+    pub(crate) fn assign_output_for_window(&mut self, window_id: WindowId) {
+        let output_id = self.preferred_output_for_window_id(window_id);
+        if let Some(output_id) = output_id {
+            self.set_window_output(window_id, output_id);
         }
     }
 
@@ -702,6 +709,61 @@ impl Context {
                 None
             }
         })
+    }
+
+    fn set_window_output(&mut self, window_id: WindowId, output_id: OutputId) {
+        if let (Some(window), Some(output)) =
+            (self.windows.get(&window_id), self.outputs.get(&output_id))
+        {
+            window.borrow_mut().output = Some(Rc::downgrade(output));
+            if self.focused_window == Some(window_id) {
+                self.current_output = Some(output_id);
+                self.last_focused_output = Some(output_id);
+            }
+        }
+    }
+
+    fn preferred_output_for_window_id(&self, window_id: WindowId) -> Option<OutputId> {
+        let window = self.windows.get(&window_id)?;
+        let w = window.borrow();
+        if let Some(parent_id) = w.parent {
+            if let Some(parent_output) = self.parent_output_if_visible(parent_id) {
+                return Some(parent_output);
+            }
+        }
+        self.current_output_for_new_window()
+    }
+
+    fn parent_output_if_visible(&self, parent_id: WindowId) -> Option<OutputId> {
+        let parent = self.windows.get(&parent_id)?;
+        let p = parent.borrow();
+        if p.hidden {
+            return None;
+        }
+        self.output_for_window_rect(&p)
+    }
+
+    fn current_output_for_new_window(&self) -> Option<OutputId> {
+        let focused_output = self
+            .focused_window
+            .and_then(|window_id| self.output_for_window_id(window_id));
+
+        focused_output
+            .or(self.last_focused_output)
+            .or(self.current_output)
+    }
+
+    fn output_for_window_id(&self, window_id: WindowId) -> Option<OutputId> {
+        let window = self.windows.get(&window_id)?;
+        let w = window.borrow();
+        if w.position_undefined || w.width <= 0 || w.height <= 0 {
+            return w
+                .output
+                .as_ref()
+                .and_then(|output| output.upgrade())
+                .map(|output| output.borrow().id);
+        }
+        self.output_for_window_rect(&w)
     }
 
     // Debug helpers removed.
@@ -1251,6 +1313,9 @@ impl Context {
                     continue;
                 };
                 let w = window.borrow();
+                if w.position_undefined || w.width <= 0 || w.height <= 0 {
+                    continue;
+                }
                 self.output_for_window_rect(&w)
             };
 
@@ -1274,11 +1339,7 @@ impl Context {
                 continue;
             }
 
-            if let (Some(window), Some(output)) =
-                (self.windows.get(&window_id), self.outputs.get(&output_id))
-            {
-                window.borrow_mut().output = Some(Rc::downgrade(output));
-            }
+            self.set_window_output(window_id, output_id);
         }
 
         // Arrange all outputs
@@ -1455,6 +1516,7 @@ impl Context {
                 .as_ref()
                 .and_then(|output| output.upgrade())
                 .map(|output| output.borrow().id)
+                .or_else(|| self.preferred_output_for_window_id(window_id))
                 .or(self.current_output);
 
             let output_id = match output_id {
@@ -1524,6 +1586,8 @@ impl Context {
             }
         }
     }
+
+    // Debug helpers removed.
 
     /// Finish manage sequence
     pub fn finish_manage(&self) {

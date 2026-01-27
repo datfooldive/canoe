@@ -83,6 +83,13 @@ impl Output {
     /// Get usable area (after subtracting exclusive zones)
     pub fn usable_area(&self) -> (i32, i32, i32, i32) {
         if self.exclusive_width > 0 && self.exclusive_height > 0 {
+            let in_bounds = self.exclusive_x >= self.x
+                && self.exclusive_x < self.x + self.width
+                && self.exclusive_y >= self.y
+                && self.exclusive_y < self.y + self.height;
+            if !in_bounds {
+                return (self.x, self.y, self.width, self.height);
+            }
             (
                 self.exclusive_x,
                 self.exclusive_y,

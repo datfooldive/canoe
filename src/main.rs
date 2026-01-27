@@ -1089,6 +1089,10 @@ impl Dispatch<RiverWindowV1, canoe::WindowId> for AppState {
                     w.parent = parent_id;
                     state.context.borrow().apply_rules_to_window(&mut w);
                 }
+                state
+                    .context
+                    .borrow_mut()
+                    .assign_output_for_window(window_id);
             }
             Event::DecorationHint {
                 hint: wayland_client::WEnum::Value(h),
