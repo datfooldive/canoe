@@ -105,6 +105,7 @@ pub fn default_xkb_bindings(
 
     let main = main_modifier.mask();
     let shift = SHIFT;
+    let super_alt = SUPER | ALT;
     let (main_left, main_right) = match main_modifier {
         crate::config::MainModifier::Alt => (Keysym::Alt_L.raw(), Keysym::Alt_R.raw()),
         crate::config::MainModifier::Super => (Keysym::Super_L.raw(), Keysym::Super_R.raw()),
@@ -148,6 +149,43 @@ pub fn default_xkb_bindings(
             main,
             Action::SmartSnapHalf {
                 side: SnapSide::Right,
+            },
+            super::BindingEvent::Pressed,
+        ),
+        // Send window to other output
+        (
+            Mode::Default,
+            Keysym::Left.raw(),
+            super_alt,
+            Action::SendToOutput {
+                direction: Direction::Reverse,
+            },
+            super::BindingEvent::Pressed,
+        ),
+        (
+            Mode::Default,
+            Keysym::Right.raw(),
+            super_alt,
+            Action::SendToOutput {
+                direction: Direction::Forward,
+            },
+            super::BindingEvent::Pressed,
+        ),
+        (
+            Mode::Default,
+            Keysym::Up.raw(),
+            super_alt,
+            Action::SendToOutput {
+                direction: Direction::Reverse,
+            },
+            super::BindingEvent::Pressed,
+        ),
+        (
+            Mode::Default,
+            Keysym::Down.raw(),
+            super_alt,
+            Action::SendToOutput {
+                direction: Direction::Forward,
             },
             super::BindingEvent::Pressed,
         ),

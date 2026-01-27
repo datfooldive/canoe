@@ -44,6 +44,10 @@ main_modifier = "alt"
 | `Super+m` | Minimize focused window |
 | `Super+Left` | Snap focused window to left half; restore if snapped right |
 | `Super+Right` | Snap focused window to right half; restore if snapped left |
+| `Super+Alt+Left` | Send focused window to previous output |
+| `Super+Alt+Right` | Send focused window to next output |
+| `Super+Alt+Up` | Send focused window to previous output |
+| `Super+Alt+Down` | Send focused window to next output |
 
 ## Mouse Actions
 

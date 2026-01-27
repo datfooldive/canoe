@@ -561,9 +561,23 @@ impl Context {
             return;
         }
 
-        let current_idx = self
-            .current_output
-            .and_then(|id| output_ids.iter().position(|&oid| oid == id))
+        let current_output_id = self
+            .windows
+            .get(&window_id)
+            .and_then(|window| {
+                window
+                    .borrow()
+                    .output
+                    .as_ref()
+                    .and_then(|output| output.upgrade())
+            })
+            .map(|output| output.borrow().id)
+            .or(self.current_output)
+            .unwrap_or(output_ids[0]);
+
+        let current_idx = output_ids
+            .iter()
+            .position(|&oid| oid == current_output_id)
             .unwrap_or(0);
 
         let next_idx = match direction {
@@ -577,8 +591,123 @@ impl Context {
             }
         };
 
+        let current_output_id = output_ids[current_idx];
         let target_output_id = output_ids[next_idx];
+        if target_output_id == current_output_id {
+            return;
+        }
+
+        let (old_area, new_area, window_rect, snap_state, maximized, fullscreen, pre_snap) = {
+            let Some(window) = self.windows.get(&window_id) else {
+                return;
+            };
+            let w = window.borrow();
+            let old_area = match self.outputs.get(&current_output_id) {
+                Some(output) => output.borrow().usable_area(),
+                None => return,
+            };
+            let new_area = match self.outputs.get(&target_output_id) {
+                Some(output) => output.borrow().usable_area(),
+                None => return,
+            };
+            (
+                old_area,
+                new_area,
+                (w.x, w.y, w.width, w.height),
+                w.snap_state,
+                w.maximized,
+                w.fullscreen.clone(),
+                w.pre_snap,
+            )
+        };
+
+        if matches!(fullscreen, super::window::FullscreenState::Output(_)) {
+            self.set_window_output(window_id, target_output_id);
+            if let (Some(window), Some(output)) = (
+                self.windows.get(&window_id),
+                self.outputs.get(&target_output_id),
+            ) {
+                let mut w = window.borrow_mut();
+                if let Some(ref rwm_output) = output.borrow().rwm_output {
+                    w.fullscreen_on(rwm_output);
+                    w.fullscreen = super::window::FullscreenState::Output(Rc::downgrade(output));
+                }
+            }
+
+            // Rearrange both outputs
+            if let Some(current_id) = self.current_output {
+                self.arrange_output(current_id);
+            }
+            self.arrange_output(target_output_id);
+            return;
+        }
+
+        let (ox, oy, ow, oh) = old_area;
+        let (nx, ny, nw, nh) = new_area;
+        if ow <= 0 || oh <= 0 || nw <= 0 || nh <= 0 {
+            self.set_window_output(window_id, target_output_id);
+            return;
+        }
+
+        let map_rect = |x: i32, y: i32, w: i32, h: i32, resize: bool| {
+            let rect_w = w.max(1);
+            let rect_h = h.max(1);
+            let ratio_w = rect_w as f32 / ow as f32;
+            let ratio_h = rect_h as f32 / oh as f32;
+            let mut new_w = if resize {
+                (ratio_w * nw as f32).round() as i32
+            } else {
+                rect_w
+            };
+            let mut new_h = if resize {
+                (ratio_h * nh as f32).round() as i32
+            } else {
+                rect_h
+            };
+            new_w = new_w.max(1).min(nw);
+            new_h = new_h.max(1).min(nh);
+
+            let rel_x = (x - ox) as f32 / ow as f32;
+            let rel_y = (y - oy) as f32 / oh as f32;
+            let mut new_x = nx + (rel_x * nw as f32).round() as i32;
+            let mut new_y = ny + (rel_y * nh as f32).round() as i32;
+            let max_x = nx + (nw - new_w).max(0);
+            let max_y = ny + (nh - new_h).max(0);
+            new_x = new_x.clamp(nx, max_x);
+            new_y = new_y.clamp(ny, max_y);
+            (new_x, new_y, new_w, new_h)
+        };
+
+        let (win_x, win_y, win_w, win_h) = window_rect;
+        let force_resize = snap_state.is_some() || maximized;
+        let needs_resize = force_resize || win_w.max(1) > nw || win_h.max(1) > nh;
+        let (new_x, new_y, new_w, new_h) = map_rect(win_x, win_y, win_w, win_h, needs_resize);
+
+        let mapped_pre_snap = if snap_state.is_some() {
+            pre_snap.map(|saved| {
+                let (px, py, pw, ph) = map_rect(saved.x, saved.y, saved.width, saved.height, true);
+                super::window::SavedGeometry {
+                    x: px,
+                    y: py,
+                    width: pw,
+                    height: ph,
+                }
+            })
+        } else {
+            None
+        };
+
         self.set_window_output(window_id, target_output_id);
+        if let Some(window) = self.windows.get(&window_id) {
+            let mut w = window.borrow_mut();
+            if let Some(saved) = mapped_pre_snap {
+                w.pre_snap = Some(saved);
+            }
+            w.set_position(new_x, new_y);
+            if needs_resize {
+                w.propose_dimensions(new_w, new_h);
+            }
+        }
 
         // Rearrange both outputs
         if let Some(current_id) = self.current_output {
