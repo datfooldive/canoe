@@ -96,12 +96,23 @@ impl Output {
 
     /// Update position from protocol event
     pub fn update_position(&mut self, x: i32, y: i32) {
+        let old_x = self.x;
+        let old_y = self.y;
         self.x = x;
         self.y = y;
         // Reset exclusive area to match new position
         if self.exclusive_width == 0 {
             self.exclusive_x = x;
             self.exclusive_y = y;
+        } else {
+            let within_old = self.exclusive_x >= old_x
+                && self.exclusive_x < old_x + self.width
+                && self.exclusive_y >= old_y
+                && self.exclusive_y < old_y + self.height;
+            if within_old {
+                self.exclusive_x += x - old_x;
+                self.exclusive_y += y - old_y;
+            }
         }
     }
 
@@ -113,6 +124,16 @@ impl Output {
         if self.exclusive_width == 0 {
             self.exclusive_width = width;
             self.exclusive_height = height;
+        } else {
+            let within_rel = self.exclusive_x >= 0
+                && self.exclusive_x < self.width
+                && self.exclusive_y >= 0
+                && self.exclusive_y < self.height;
+            let within_global = self.contains_point(self.exclusive_x, self.exclusive_y);
+            if within_rel && !within_global {
+                self.exclusive_x += self.x;
+                self.exclusive_y += self.y;
+            }
         }
     }
 

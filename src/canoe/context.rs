@@ -584,6 +584,128 @@ impl Context {
         self.arrange_output(target_output_id);
     }
 
+    pub(crate) fn update_window_output_from_position(&mut self, window_id: WindowId) {
+        let (current_output_id, rect_output_id) = {
+            let Some(window) = self.windows.get(&window_id) else {
+                return;
+            };
+            let w = window.borrow();
+            let current_output_id = w
+                .output
+                .as_ref()
+                .and_then(|output| output.upgrade())
+                .map(|output| output.borrow().id);
+            let rect_output_id = self.output_for_window_rect(&w);
+            (current_output_id, rect_output_id)
+        };
+
+        let Some(new_output_id) = rect_output_id else {
+            return;
+        };
+
+        if current_output_id == Some(new_output_id) {
+            return;
+        }
+
+        if let (Some(window), Some(new_output)) = (
+            self.windows.get(&window_id),
+            self.outputs.get(&new_output_id),
+        ) {
+            window.borrow_mut().output = Some(Rc::downgrade(new_output));
+        }
+    }
+
+    pub(crate) fn update_window_output_from_pointer(
+        &mut self,
+        seat_id: SeatId,
+        pointer_x: i32,
+        pointer_y: i32,
+    ) {
+        let Some(output_id) = self.output_at_point(pointer_x, pointer_y) else {
+            return;
+        };
+
+        let Some(window_id) = self.focused_window else {
+            return;
+        };
+
+        let Some(window) = self.windows.get(&window_id) else {
+            return;
+        };
+
+        let mut w = window.borrow_mut();
+        let is_move = match &w.operator {
+            super::window::Operator::Move { seat, .. } => {
+                seat.as_ref()
+                    .and_then(|op_seat| op_seat.upgrade().map(|seat| seat.borrow().id == seat_id))
+                    == Some(true)
+            }
+            _ => false,
+        };
+        if !is_move {
+            return;
+        }
+
+        let current_output_id = w
+            .output
+            .as_ref()
+            .and_then(|output| output.upgrade())
+            .map(|output| output.borrow().id);
+        if current_output_id == Some(output_id) {
+            return;
+        }
+
+        if let Some(new_output) = self.outputs.get(&output_id) {
+            w.output = Some(Rc::downgrade(new_output));
+        }
+    }
+
+    fn output_for_window_rect(&self, window: &Window) -> Option<OutputId> {
+        let wx1 = window.x;
+        let wy1 = window.y;
+        let wx2 = window.x + window.width;
+        let wy2 = window.y + window.height;
+
+        let mut best: Option<(OutputId, i64)> = None;
+        for (id, output) in &self.outputs {
+            let out = output.borrow();
+            let ox1 = out.x;
+            let oy1 = out.y;
+            let ox2 = out.x + out.width;
+            let oy2 = out.y + out.height;
+            let overlap_w = (wx2.min(ox2) - wx1.max(ox1)).max(0) as i64;
+            let overlap_h = (wy2.min(oy2) - wy1.max(oy1)).max(0) as i64;
+            let area = overlap_w * overlap_h;
+            if area <= 0 {
+                continue;
+            }
+            if best.is_none_or(|(_, best_area)| area > best_area) {
+                best = Some((*id, area));
+            }
+        }
+
+        let best_id = best.map(|(id, _)| id);
+        if best_id.is_some() {
+            return best_id;
+        }
+
+        let center_x = window.x + (window.width / 2);
+        let center_y = window.y + (window.height / 2);
+        self.output_at_point(center_x, center_y)
+    }
+
+    fn output_at_point(&self, x: i32, y: i32) -> Option<OutputId> {
+        self.outputs.iter().find_map(|(id, output)| {
+            if output.borrow().contains_point(x, y) {
+                Some(*id)
+            } else {
+                None
+            }
+        })
+    }
+
+    // Debug helpers removed.
+
     /// Start pointer move operation
     fn start_pointer_move(&mut self, seat_id: SeatId) {
         // First, focus the window under the pointer
@@ -811,28 +933,28 @@ impl Context {
     pub(crate) fn maximize_window(&mut self, window_id: WindowId) {
         let border_width = self.config.ui.border_width;
         let titlebar_height = super::titlebar::titlebar_height(&self.config.ui);
+        self.update_window_output_from_position(window_id);
 
-        let output = self
+        let output_id = self
             .windows
             .get(&window_id)
             .and_then(|window| {
-                window
-                    .borrow()
-                    .output
-                    .as_ref()
-                    .and_then(|weak| weak.upgrade())
+                let w = window.borrow();
+                self.output_for_window_rect(&w)
             })
-            .or_else(|| {
-                self.current_output
-                    .and_then(|oid| self.outputs.get(&oid))
-                    .cloned()
-            });
+            .or(self.current_output);
+
+        let output = output_id.and_then(|oid| self.outputs.get(&oid).cloned());
 
         let Some(output) = output else {
             return;
         };
 
-        let (ox, oy, ow, oh) = output.borrow().usable_area();
+        let (ox, oy, ow, oh) = {
+            let out = output.borrow();
+            let (ox, oy, ow, oh) = out.usable_area();
+            (ox, oy, ow, oh)
+        };
         let swallow_top = self
             .windows
             .get(&window_id)
@@ -843,7 +965,6 @@ impl Context {
         let content_h = (oh - border_width * 2 - titlebar_height + swallow_top).max(1);
         let content_x = ox + border_width;
         let content_y = oy + border_width + titlebar_height - swallow_top;
-
         if let Some(window) = self.windows.get(&window_id) {
             let mut w = window.borrow_mut();
             if !w.maximized && w.pre_snap.is_none() {
@@ -864,12 +985,15 @@ impl Context {
     }
 
     fn unmaximize_for_move(&self, w: &mut Window, pointer_x: i32, pointer_y: i32, adjust_y: bool) {
-        if !w.maximized {
+        let was_maximized = w.maximized;
+        let was_snapped = w.snap_state.is_some();
+        if !was_maximized && !was_snapped {
             return;
         }
 
         let saved = w.pre_snap.take();
         w.maximized = false;
+        w.snap_state = None;
 
         if let Some(saved) = saved {
             let swallow_top = w.swallow_top.max(0);
@@ -887,7 +1011,9 @@ impl Context {
             w.set_position(new_x, new_y);
         }
 
-        w.inform_unmaximized();
+        if was_maximized {
+            w.inform_unmaximized();
+        }
     }
 
     pub(crate) fn unmaximize_window(&mut self, window_id: WindowId) {
@@ -908,28 +1034,28 @@ impl Context {
 
         let border_width = self.config.ui.border_width;
         let titlebar_height = super::titlebar::titlebar_height(&self.config.ui);
+        self.update_window_output_from_position(window_id);
 
-        let output = self
+        let output_id = self
             .windows
             .get(&window_id)
             .and_then(|window| {
-                window
-                    .borrow()
-                    .output
-                    .as_ref()
-                    .and_then(|weak| weak.upgrade())
+                let w = window.borrow();
+                self.output_for_window_rect(&w)
             })
-            .or_else(|| {
-                self.current_output
-                    .and_then(|oid| self.outputs.get(&oid))
-                    .cloned()
-            });
+            .or(self.current_output);
+
+        let output = output_id.and_then(|oid| self.outputs.get(&oid).cloned());
 
         let Some(output) = output else {
             return;
         };
 
-        let (ox, oy, ow, oh) = output.borrow().usable_area();
+        let (ox, oy, ow, oh) = {
+            let out = output.borrow();
+            let (ox, oy, ow, oh) = out.usable_area();
+            (ox, oy, ow, oh)
+        };
         let swallow_top = self
             .windows
             .get(&window_id)
@@ -949,7 +1075,6 @@ impl Context {
         let content_h = (oh - border_width * 2 - titlebar_height + swallow_top).max(1);
         let content_x = side_x + border_width;
         let content_y = oy + border_width + titlebar_height - swallow_top;
-
         let Some(window) = self.windows.get(&window_id) else {
             return;
         };
@@ -1118,6 +1243,44 @@ impl Context {
             }
         }
 
+        // Keep window output association in sync with window positions.
+        let window_ids: Vec<WindowId> = self.windows.keys().copied().collect();
+        for window_id in window_ids {
+            let output_id = {
+                let Some(window) = self.windows.get(&window_id) else {
+                    continue;
+                };
+                let w = window.borrow();
+                self.output_for_window_rect(&w)
+            };
+
+            let Some(output_id) = output_id else {
+                continue;
+            };
+
+            let current_output_id = self
+                .windows
+                .get(&window_id)
+                .and_then(|window| {
+                    window
+                        .borrow()
+                        .output
+                        .as_ref()
+                        .and_then(|output| output.upgrade())
+                })
+                .map(|output| output.borrow().id);
+
+            if current_output_id == Some(output_id) {
+                continue;
+            }
+
+            if let (Some(window), Some(output)) =
+                (self.windows.get(&window_id), self.outputs.get(&output_id))
+            {
+                window.borrow_mut().output = Some(Rc::downgrade(output));
+            }
+        }
+
         // Arrange all outputs
         let output_ids: Vec<OutputId> = self.outputs.keys().copied().collect();
         for output_id in output_ids {
@@ -1244,9 +1407,9 @@ impl Context {
 
             // Check if window should be visible
             let mut visible = self
-                .current_output
-                .and_then(|oid| self.outputs.get(&oid).map(|o| w.is_visible_on(&o.borrow())))
-                .unwrap_or(false);
+                .outputs
+                .values()
+                .any(|output| w.is_visible_on(&output.borrow()));
             if unminimize_all {
                 visible = true;
             }

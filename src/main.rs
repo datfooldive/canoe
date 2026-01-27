@@ -1350,18 +1350,39 @@ impl Dispatch<RiverSeatV1, canoe::SeatId> for AppState {
             }
             Event::OpRelease => {
                 // End operation
-                let context = state.context.borrow();
-                if let Some(wid) = context.focused_window {
-                    if let Some(window) = context.windows.get(&wid) {
-                        window.borrow_mut().end_operation();
+                let (window_id, was_move) = {
+                    let context = state.context.borrow();
+                    if let Some(wid) = context.focused_window {
+                        if let Some(window) = context.windows.get(&wid) {
+                            let mut w = window.borrow_mut();
+                            let was_move =
+                                matches!(w.operator, canoe::window::Operator::Move { .. });
+                            w.end_operation();
+                            (Some(wid), was_move)
+                        } else {
+                            (None, false)
+                        }
+                    } else {
+                        (None, false)
+                    }
+                };
+                seat.borrow().end_pointer_op();
+                if was_move {
+                    if let Some(window_id) = window_id {
+                        state
+                            .context
+                            .borrow_mut()
+                            .update_window_output_from_position(window_id);
                     }
                 }
-                seat.borrow().end_pointer_op();
-                drop(context);
                 state.context.borrow_mut().update_cursor_for_seat(*seat_id);
             }
             Event::PointerPosition { x, y } => {
                 seat.borrow_mut().update_pointer_position(x, y);
+                state
+                    .context
+                    .borrow_mut()
+                    .update_window_output_from_pointer(*seat_id, x, y);
                 state.context.borrow_mut().update_cursor_for_seat(*seat_id);
                 update_menu_hover_from_global(state, *seat_id, qh);
                 let titlebar_window =
@@ -1536,9 +1557,13 @@ impl Dispatch<RiverLayerShellOutputV1, canoe::OutputId> for AppState {
         } = event;
         {
             if let Some(output) = state.context.borrow().outputs.get(output_id) {
-                output
-                    .borrow_mut()
-                    .update_exclusive_area(x, y, width, height);
+                let mut out = output.borrow_mut();
+                let (global_x, global_y) = if out.contains_point(x, y) {
+                    (x, y)
+                } else {
+                    (x + out.x, y + out.y)
+                };
+                out.update_exclusive_area(global_x, global_y, width, height);
             }
         }
     }
