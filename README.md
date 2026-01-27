@@ -37,6 +37,7 @@ main_modifier = "alt"
 | `Super+w` | Close focused window |
 | `Super+Tab` | Focus next window |
 | `Super+Shift+Tab` | Focus previous window |
+| ``Super+` `` | Focus next window of the same application |
 | `Super+Enter` | Toggle fullscreen |
 | `Super+Down` | Unfullscreen/unmaximize, otherwise minimize focused window |
 | `Super+Up` | Maximize focused window |

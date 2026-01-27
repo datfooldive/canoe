@@ -141,13 +141,13 @@ fn render_window_menu(state: &mut AppState, qh: &QueueHandle<AppState>) {
     }
 }
 
-fn open_window_menu(
+fn open_window_menu_with_items(
     state: &mut AppState,
     output_id: canoe::OutputId,
-    pointer_x: i32,
-    pointer_y: i32,
+    pointer: (i32, i32),
     centered: bool,
     mode: canoe::WindowMenuMode,
+    items: Vec<canoe::MenuItem>,
     qh: &QueueHandle<AppState>,
 ) {
     let (Some(compositor), Some(layer_shell)) = (
@@ -157,16 +157,15 @@ fn open_window_menu(
         return;
     };
 
-    let (items, output_info, focused_window, menu_theme) = {
+    let (output_info, focused_window, menu_theme) = {
         let context = state.context.borrow();
-        let items = context.collect_menu_items(output_id);
         let focused = context.focused_window;
         let menu_theme = canoe::MenuTheme::from_ui(&context.config.ui);
         let info = context.outputs.get(&output_id).map(|output| {
             let out = output.borrow();
             (out.width, out.height, out.wl_output.clone())
         });
-        (items, info, focused, menu_theme)
+        (info, focused, menu_theme)
     };
 
     let Some((ow, oh, wl_output)) = output_info else {
@@ -192,8 +191,8 @@ fn open_window_menu(
         layer_surface,
         output_id,
         items,
-        pointer_x,
-        pointer_y,
+        pointer.0,
+        pointer.1,
         menu_theme,
     );
     let mut initial_preview = None;
@@ -204,8 +203,8 @@ fn open_window_menu(
             .hovered
             .and_then(|idx| menu.items.get(idx).map(|item| item.window_id));
     }
-    let mut local_x = pointer_x.max(0);
-    let mut local_y = pointer_y.max(0);
+    let mut local_x = pointer.0.max(0);
+    let mut local_y = pointer.1.max(0);
     if ow > 0 && oh > 0 {
         if centered {
             local_x = ((ow - menu.width) / 2).max(0);
@@ -244,6 +243,30 @@ fn open_window_menu(
             context.preview_alt_tab_window(window_id);
         }
     }
+}
+
+fn open_window_menu(
+    state: &mut AppState,
+    output_id: canoe::OutputId,
+    pointer_x: i32,
+    pointer_y: i32,
+    centered: bool,
+    mode: canoe::WindowMenuMode,
+    qh: &QueueHandle<AppState>,
+) {
+    let items = {
+        let context = state.context.borrow();
+        context.collect_menu_items(output_id)
+    };
+    open_window_menu_with_items(
+        state,
+        output_id,
+        (pointer_x, pointer_y),
+        centered,
+        mode,
+        items,
+        qh,
+    );
 }
 
 fn ensure_window_menu_shield(
@@ -485,6 +508,19 @@ fn clear_titlebar_state(state: &mut AppState, window_id: canoe::WindowId) -> boo
     changed
 }
 
+fn menu_matches_app_id(context: &canoe::Context, menu: &canoe::WindowMenu, app_id: &str) -> bool {
+    if menu.items.is_empty() {
+        return false;
+    }
+    menu.items.iter().all(|item| {
+        let Some(window) = context.windows.get(&item.window_id) else {
+            return false;
+        };
+        let w = window.borrow();
+        w.app_id.as_deref() == Some(app_id)
+    })
+}
+
 fn handle_window_menu_cycle(state: &mut AppState, qh: &QueueHandle<AppState>) {
     let mut should_render = false;
     let mut open_new = false;
@@ -563,6 +599,113 @@ fn handle_window_menu_cycle(state: &mut AppState, qh: &QueueHandle<AppState>) {
         0,
         true,
         canoe::WindowMenuMode::AltTab,
+        qh,
+    );
+    ensure_window_menu_shield(state, output_id, qh);
+}
+
+fn handle_window_menu_cycle_app(state: &mut AppState, qh: &QueueHandle<AppState>) {
+    let (app_id, output_id, items) = {
+        let context = state.context.borrow();
+        let app_id = context
+            .focused_window
+            .and_then(|window_id| context.windows.get(&window_id))
+            .and_then(|window| window.borrow().app_id.clone())
+            .filter(|app_id| !app_id.is_empty());
+        let Some(app_id) = app_id else {
+            return;
+        };
+        let output_id = {
+            let focused_output = context.focused_window.and_then(|window_id| {
+                context.windows.get(&window_id).and_then(|window| {
+                    let window_ref = window.borrow();
+                    let center_x = window_ref.x + (window_ref.width / 2);
+                    let center_y = window_ref.y + (window_ref.height / 2);
+                    if let Some(output) = window_ref.output.as_ref().and_then(|o| o.upgrade()) {
+                        let out_ref = output.borrow();
+                        if out_ref.contains_point(center_x, center_y) {
+                            return Some(out_ref.id);
+                        }
+                    }
+                    context.outputs.iter().find_map(|(&id, output)| {
+                        if output.borrow().contains_point(center_x, center_y) {
+                            Some(id)
+                        } else {
+                            None
+                        }
+                    })
+                })
+            });
+            focused_output.or(context.current_output)
+        };
+        let Some(output_id) = output_id else {
+            return;
+        };
+        let items = context.collect_menu_items_for_app(output_id, &app_id);
+        if items.len() < 2 {
+            return;
+        }
+        (app_id, output_id, items)
+    };
+
+    let mut should_render = false;
+    let mut open_new = false;
+    let mut ensure_shield = None;
+    let mut preview_window = None;
+
+    {
+        let mut context = state.context.borrow_mut();
+        let is_alt_tab = context.window_menu_mode == Some(canoe::WindowMenuMode::AltTab);
+        let matches_app = if is_alt_tab {
+            context
+                .window_menu
+                .as_ref()
+                .map(|menu| menu_matches_app_id(&context, menu, &app_id))
+                .unwrap_or(false)
+        } else {
+            false
+        };
+        if let Some(menu) = context.window_menu.as_mut() {
+            if matches_app {
+                if menu.select_next() {
+                    should_render = true;
+                    preview_window = menu
+                        .hovered
+                        .and_then(|idx| menu.items.get(idx).map(|item| item.window_id));
+                }
+                ensure_shield = Some(menu.output_id);
+            } else {
+                context.close_window_menu();
+                open_new = true;
+            }
+        } else {
+            open_new = true;
+        }
+
+        if let Some(window_id) = preview_window {
+            context.preview_alt_tab_window(window_id);
+        }
+    }
+
+    if should_render {
+        render_window_menu(state, qh);
+    }
+
+    if let Some(output_id) = ensure_shield {
+        ensure_window_menu_shield(state, output_id, qh);
+    }
+
+    if !open_new {
+        return;
+    }
+
+    open_window_menu_with_items(
+        state,
+        output_id,
+        (0, 0),
+        true,
+        canoe::WindowMenuMode::AltTab,
+        items,
         qh,
     );
     ensure_window_menu_shield(state, output_id, qh);
@@ -1643,6 +1786,9 @@ impl Dispatch<RiverXkbBindingV1, (canoe::SeatId, usize)> for AppState {
                 match action {
                     binding::Action::WindowMenuCycle => {
                         handle_window_menu_cycle(state, qh);
+                    }
+                    binding::Action::WindowMenuCycleApp => {
+                        handle_window_menu_cycle_app(state, qh);
                     }
                     _ => {
                         seat.borrow_mut().queue_action(action);

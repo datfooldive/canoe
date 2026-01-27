@@ -89,6 +89,8 @@ pub enum Action {
     ActivateMenuHovered,
     /// Cycle window menu entries
     WindowMenuCycle,
+    /// Cycle window menu entries for the focused application
+    WindowMenuCycleApp,
     /// Activate selected window menu item
     WindowMenuCommit,
 
@@ -195,6 +197,13 @@ pub fn default_xkb_bindings(
             Keysym::Tab.raw(),
             main,
             Action::WindowMenuCycle,
+            super::BindingEvent::Pressed,
+        ),
+        (
+            Mode::Default,
+            Keysym::grave.raw(),
+            main,
+            Action::WindowMenuCycleApp,
             super::BindingEvent::Pressed,
         ),
         (

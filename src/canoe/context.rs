@@ -430,7 +430,7 @@ impl Context {
                     self.activate_menu_hovered();
                 }
             }
-            Action::WindowMenuCycle => {
+            Action::WindowMenuCycle | Action::WindowMenuCycleApp => {
                 if self.window_menu_mode == Some(WindowMenuMode::AltTab) {
                     if let Some(menu) = self.window_menu.as_mut() {
                         menu.select_next();
@@ -1758,6 +1758,36 @@ impl Context {
                 continue;
             }
             items.push(menu_item_from_window(window_id, focused, &window.borrow()));
+        }
+
+        items
+    }
+
+    /// Build menu items for windows sharing the given app id (including hidden).
+    pub fn collect_menu_items_for_app(&self, _output_id: OutputId, app_id: &str) -> Vec<MenuItem> {
+        let focused = self.focused_window;
+
+        let mut items = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        for window_id in &self.focus_stack {
+            if let Some(window) = self.windows.get(window_id) {
+                let w = window.borrow();
+                if w.app_id.as_deref() == Some(app_id) {
+                    items.push(menu_item_from_window(*window_id, focused, &w));
+                    seen.insert(*window_id);
+                }
+            }
+        }
+
+        for (&window_id, window) in &self.windows {
+            if seen.contains(&window_id) {
+                continue;
+            }
+            let w = window.borrow();
+            if w.app_id.as_deref() == Some(app_id) {
+                items.push(menu_item_from_window(window_id, focused, &w));
+            }
         }
 
         items
