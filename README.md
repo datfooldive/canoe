@@ -4,6 +4,22 @@
 
 A stacking window manager for the River Wayland compositor, written in Rust.
 
+## Features
+
+- Stacking window management
+- Forced server-side decorations with classic window borders & titlebars
+- Titlebar/edge window movement and resizing (Super+Drag anywhere)
+- Multihead support (focus/send windows across outputs)
+- Window switcher (keyboard cycle + desktop right-click menu)
+- Window focus follows click
+- Optional "swallowing" of client-side decoration via per-window rules
+
+## Installation
+
+```bash
+cargo install canoe
+```
+
 ## Building
 
 ```bash
@@ -20,14 +36,6 @@ For debug output:
 ```bash
 RUST_LOG=info river -c ./target/release/canoe
 ```
-
-## Features
-
-- Stacking window management
-- Forced server-side decorations with classic window borders & titlebars
-- Titlebar/edge window movement and resizing (Super+Drag anywhere)
-- Window focus follows click
-- Optional "swallowing" of client-side decoration via per-window rules
 
 ## Keyboard Shortcuts
 
