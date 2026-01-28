@@ -19,22 +19,13 @@ For debug output:
 RUST_LOG=info river -c ./target/release/canoe
 ```
 
-## Configuration
+## Features
 
-Canoe reads `~/.config/canoe/canoe.toml`.
-The main modifier defaults to `super`, but you can change it:
-
-```toml
-main_modifier = "alt"
-```
-
-The launcher defaults to `fuzzel`. You can override it with a command or argv:
-
-```toml
-launcher_cmd = "fuzzel"
-# Or with arguments:
-launcher_cmd = ["fuzzel", "--dmenu"]
-```
+- Stacking window management
+- Forced server-side decorations with classic window borders & titlebars
+- Titlebar/edge window movement and resizing (Super+Drag anywhere)
+- Window focus follows click
+- Optional "swallowing" of client-side decoration via per-window rules
 
 ## Keyboard Shortcuts
 
@@ -68,18 +59,51 @@ launcher_cmd = ["fuzzel", "--dmenu"]
 | `Super+Left Drag` | Move window (anywhere) |
 | `Super+Right Drag` | Resize window (anywhere) |
 
-## Features
+## Configuration
 
-- Stacking window management
-- Yellow window borders (10px)
-- Yellow titlebars (24px)
-- Server-side decorations
-- Titlebar/edge window movement and resizing (Super+Drag anywhere)
-- Window focus follows click
+Canoe reads `~/.config/canoe/canoe.toml`.
+The main modifier defaults to `super`, but you can change it:
+
+```toml
+main_modifier = "alt"
+```
+
+The launcher defaults to `fuzzel`. You can override it with a command or argv:
+
+```toml
+launcher_cmd = "fuzzel"
+# Or with arguments:
+launcher_cmd = ["fuzzel", "--dmenu"]
+```
+
+### Rule Matching
+
+Rules live under `[[rules]]` in `canoe.toml`. App ID matching uses OR across the
+app-id fields, and property matching uses AND across the listed properties.
+
+```toml
+[[rules]]
+match_app_id = ["foot", "kitty"]   # exact match, any value matches
+match_app_id_prefix = "mate-"      # prefix match (e.g. mate-calc)
+match_props = ["toplevel", "csd_only"] # all props must match
+```
+
+Supported `match_props` values:
+- `toplevel` (window has no parent)
+- `csd_only` (client does not support SSD)
+
+The matching windows can have parts of their content "swallowed". This removes
+the client-side decoration on my Firefox, for instance:
+
+```toml
+match_app_id = "firefox-esr"
+match_props = "toplevel"
+swallow_top = 38
+```
 
 ## Requirements
 
-- River compositor
+- [River](https://codeberg.org/river/river) Wayland compositor
 - foot terminal (for Super+Shift+Return)
 - fuzzel (for Super+Space launcher)
 
