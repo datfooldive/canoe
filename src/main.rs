@@ -1738,16 +1738,20 @@ impl Dispatch<RiverLayerShellSeatV1, canoe::SeatId> for AppState {
         if let Some(seat) = state.context.borrow().seats.get(seat_id) {
             match event {
                 Event::FocusExclusive => {
-                    seat.borrow_mut().focus_exclusive = true;
-                    seat.borrow_mut().queue_action(binding::Action::ClearFocus);
+                    let mut seat_ref = seat.borrow_mut();
+                    seat_ref.focus_exclusive = true;
+                    seat_ref.queue_action(binding::Action::ClearFocus);
                 }
                 Event::FocusNonExclusive => {
                     seat.borrow_mut().focus_exclusive = false;
                 }
                 Event::FocusNone => {
-                    seat.borrow_mut().focus_exclusive = false;
-                    seat.borrow_mut()
-                        .queue_action(binding::Action::RestoreFocus);
+                    let mut seat_ref = seat.borrow_mut();
+                    let was_exclusive = seat_ref.focus_exclusive;
+                    seat_ref.focus_exclusive = false;
+                    if was_exclusive {
+                        seat_ref.queue_action(binding::Action::RestoreFocus);
+                    }
                 }
             }
         }
@@ -2245,10 +2249,21 @@ impl Dispatch<wl_pointer::WlPointer, canoe::SeatId> for AppState {
                     match btn_state {
                         wayland_client::WEnum::Value(wl_pointer::ButtonState::Pressed) => {
                             if target != canoe::PointerTarget::Menu {
-                                let mut context = state.context.borrow_mut();
-                                if context.window_menu.is_some() {
-                                    context.close_window_menu();
+                                let had_menu = {
+                                    let mut context = state.context.borrow_mut();
+                                    if context.window_menu.is_some() {
+                                        context.close_window_menu();
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                };
+                                if had_menu {
                                     seat.borrow_mut().menu_click_button = None;
+                                    if matches!(target, canoe::PointerTarget::Desktop(_)) {
+                                        seat.borrow_mut().queue_action(binding::Action::ClearFocus);
+                                        request_manage_dirty(state);
+                                    }
                                     return;
                                 }
                             }
@@ -2277,6 +2292,8 @@ impl Dispatch<wl_pointer::WlPointer, canoe::SeatId> for AppState {
                                         update_menu_hover_from_global(state, *seat_id, _qh);
                                         seat.borrow_mut().menu_click_button = Some(button);
                                     }
+                                    seat.borrow_mut().queue_action(binding::Action::ClearFocus);
+                                    request_manage_dirty(state);
                                 }
                                 canoe::PointerTarget::Menu => {
                                     seat.borrow_mut().menu_click_button = Some(button);
