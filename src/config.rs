@@ -228,27 +228,42 @@ struct UiConfigFile {
     border_width: Option<i32>,
     border_active: Option<BorderLayersFile>,
     border_inactive: Option<BorderLayersFile>,
+    #[serde(default, deserialize_with = "deserialize_opt_color")]
     titlebar_text_active: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_opt_color")]
     titlebar_text_inactive: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_opt_color")]
     titlebar_bg_active: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_opt_color")]
     titlebar_bg_inactive: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_opt_color")]
     menu_bg: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_opt_color")]
     menu_text: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_opt_color")]
     menu_highlight_bg: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_opt_color")]
     menu_highlight_text: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_opt_color")]
     button_bg: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_opt_color")]
     button_highlight: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_opt_color")]
     button_shadow: Option<u32>,
     font_name: Option<String>,
     #[serde(default, deserialize_with = "deserialize_opt_f32")]
     font_size: Option<f32>,
+    #[serde(default, deserialize_with = "deserialize_opt_color")]
     desktop_background: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
 struct BorderLayersFile {
+    #[serde(default, deserialize_with = "deserialize_opt_color")]
     outer: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_opt_color")]
     mid: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_opt_color")]
     inner: Option<u32>,
 }
 
@@ -340,6 +355,65 @@ where
             "expected float or integer, got {}",
             other.type_str()
         ))),
+    }
+}
+
+fn deserialize_opt_color<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<toml::Value>::deserialize(deserializer)?;
+    match value {
+        None => Ok(None),
+        Some(toml::Value::Integer(value)) => {
+            let parsed = u32::try_from(value)
+                .map_err(|_| de::Error::custom("expected color integer in range 0..=0xFFFFFFFF"))?;
+            Ok(Some(parsed))
+        }
+        Some(toml::Value::String(value)) => parse_color_str(&value)
+            .ok_or_else(|| de::Error::custom("expected color string #rgb, #rrggbb, or #rrggbbaa"))
+            .map(Some),
+        Some(other) => Err(de::Error::custom(format!(
+            "expected string or integer, got {}",
+            other.type_str()
+        ))),
+    }
+}
+
+fn parse_color_str(value: &str) -> Option<u32> {
+    let value = value.trim();
+    let hex = value.strip_prefix('#')?;
+    if !hex.is_ascii() {
+        return None;
+    }
+
+    match hex.len() {
+        3 => {
+            let mut chars = hex.chars();
+            let r = chars.next()?.to_digit(16)? as u8;
+            let g = chars.next()?.to_digit(16)? as u8;
+            let b = chars.next()?.to_digit(16)? as u8;
+            Some(
+                (u32::from(r * 0x11) << 24)
+                    | (u32::from(g * 0x11) << 16)
+                    | (u32::from(b * 0x11) << 8)
+                    | 0xFF,
+            )
+        }
+        6 => {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            Some((u32::from(r) << 24) | (u32::from(g) << 16) | (u32::from(b) << 8) | 0xFF)
+        }
+        8 => {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
+            Some((u32::from(r) << 24) | (u32::from(g) << 16) | (u32::from(b) << 8) | u32::from(a))
+        }
+        _ => None,
     }
 }
 
@@ -495,6 +569,23 @@ mod tests {
         assert_eq!(prefixes, &vec!["mate-".to_string()]);
         assert_eq!(rule.require_csd_only, None);
         assert_eq!(rule.require_no_parent, None);
+    }
+
+    #[test]
+    fn test_ui_color_parsing() {
+        let contents = r##"
+            [ui]
+            menu_bg = "#112233"
+            menu_text = "#123"
+            titlebar_bg_active = "#11223344"
+        "##;
+
+        let file_config = toml::from_str::<FileConfig>(contents).expect("parse config");
+        let ui = file_config.ui.expect("ui present");
+
+        assert_eq!(ui.menu_bg, Some(0x112233FF));
+        assert_eq!(ui.menu_text, Some(0x112233FF));
+        assert_eq!(ui.titlebar_bg_active, Some(0x11223344));
     }
 }
 
