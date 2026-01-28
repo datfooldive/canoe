@@ -57,6 +57,8 @@ pub enum Action {
     Spawn { argv: Vec<String> },
     /// Spawn a shell command
     SpawnShell { cmd: String },
+    /// Spawn the application launcher on the focused output
+    SpawnLauncher,
 
     /// Cycle focus through windows
     FocusIter { direction: Direction },
@@ -250,9 +252,7 @@ pub fn default_xkb_bindings(
             Mode::Default,
             Keysym::space.raw(),
             main,
-            Action::SpawnShell {
-                cmd: "fuzzel".to_string(),
-            },
+            Action::SpawnLauncher,
             super::BindingEvent::Pressed,
         ),
         (

@@ -167,6 +167,9 @@ impl Context {
         // Update current output if necessary
         if self.current_output == Some(output_id) {
             self.current_output = self.outputs.keys().find(|&&id| id != output_id).copied();
+            if let Some(current_output) = self.current_output {
+                self.set_default_layer_shell_output(current_output);
+            }
         }
 
         self.outputs.remove(&output_id);
@@ -351,6 +354,9 @@ impl Context {
             Action::SpawnShell { cmd } => {
                 self.spawn_shell(&cmd);
             }
+            Action::SpawnLauncher => {
+                self.spawn(&["fuzzel".to_string()]);
+            }
             Action::FocusIter { direction } => {
                 self.focus_iter(direction);
             }
@@ -532,6 +538,7 @@ impl Context {
         };
 
         self.current_output = Some(output_ids[next_idx]);
+        self.set_default_layer_shell_output(output_ids[next_idx]);
 
         // Focus top window on new output
         if let Some(output) = self.outputs.get(&output_ids[next_idx]) {
@@ -840,6 +847,16 @@ impl Context {
         })
     }
 
+    fn set_default_layer_shell_output(&self, output_id: OutputId) {
+        let Some(output) = self.outputs.get(&output_id) else {
+            return;
+        };
+        let output_ref = output.borrow();
+        if let Some(ref layer_shell_output) = output_ref.layer_shell_output {
+            layer_shell_output.set_default();
+        }
+    }
+
     fn set_window_output(&mut self, window_id: WindowId, output_id: OutputId) {
         if let (Some(window), Some(output)) =
             (self.windows.get(&window_id), self.outputs.get(&output_id))
@@ -848,6 +865,7 @@ impl Context {
             if self.focused_window == Some(window_id) {
                 self.current_output = Some(output_id);
                 self.last_focused_output = Some(output_id);
+                self.set_default_layer_shell_output(output_id);
             }
         }
     }
