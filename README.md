@@ -28,6 +28,14 @@ The main modifier defaults to `super`, but you can change it:
 main_modifier = "alt"
 ```
 
+The launcher defaults to `fuzzel`. You can override it with a command or argv:
+
+```toml
+launcher_cmd = "fuzzel"
+# Or with arguments:
+launcher_cmd = ["fuzzel", "--dmenu"]
+```
+
 ## Keyboard Shortcuts
 
 | Shortcut | Action |

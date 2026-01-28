@@ -158,6 +158,7 @@ pub struct Config {
     pub env: HashMap<String, String>,
     pub working_directory: Option<String>,
     pub startup_cmds: Vec<Vec<String>>,
+    pub launcher_cmd: Vec<String>,
     pub xcursor_theme: Option<XCursorTheme>,
     pub main_modifier: MainModifier,
 
@@ -178,6 +179,7 @@ impl Default for Config {
             env: HashMap::new(),
             working_directory: dirs::home_dir().map(|p| p.to_string_lossy().to_string()),
             startup_cmds: Vec::new(),
+            launcher_cmd: vec!["fuzzel".to_string()],
             xcursor_theme: None,
             main_modifier: MainModifier::default(),
 
@@ -197,6 +199,7 @@ impl Default for Config {
 #[derive(Debug, Deserialize)]
 struct FileConfig {
     main_modifier: Option<MainModifier>,
+    launcher_cmd: Option<StringOrVec>,
     ui: Option<UiConfigFile>,
     rules: Option<Vec<RuleFile>>,
 }
@@ -348,6 +351,14 @@ fn string_or_vec(value: Option<StringOrVec>) -> Option<Vec<String>> {
     }
 }
 
+fn clean_cmd_args(values: Vec<String>) -> Vec<String> {
+    values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
 fn compile_regex(value: Option<String>) -> Option<Regex> {
     let pattern = value?;
 
@@ -393,6 +404,12 @@ pub fn load_config() -> Config {
             if let Ok(file_config) = toml::from_str::<FileConfig>(&contents) {
                 if let Some(main_modifier) = file_config.main_modifier {
                     config.main_modifier = main_modifier;
+                }
+                if let Some(launcher_cmd) = string_or_vec(file_config.launcher_cmd) {
+                    let launcher_cmd = clean_cmd_args(launcher_cmd);
+                    if !launcher_cmd.is_empty() {
+                        config.launcher_cmd = launcher_cmd;
+                    }
                 }
                 if let Some(ui) = file_config.ui {
                     config.ui.apply(ui);

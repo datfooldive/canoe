@@ -355,7 +355,7 @@ impl Context {
                 self.spawn_shell(&cmd);
             }
             Action::SpawnLauncher => {
-                self.spawn(&["fuzzel".to_string()]);
+                self.spawn(&self.config.launcher_cmd);
             }
             Action::FocusIter { direction } => {
                 self.focus_iter(direction);
