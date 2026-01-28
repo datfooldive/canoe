@@ -457,6 +457,12 @@ impl Context {
                     }
                 }
             }
+            Action::ClearFocus => {
+                self.clear_keyboard_focus();
+            }
+            Action::RestoreFocus => {
+                self.restore_focus_from_stack();
+            }
             Action::CustomFn { func, ref arg } => {
                 let state = self.get_state();
                 func(&state, arg);
@@ -898,6 +904,64 @@ impl Context {
         focused_output
             .or(self.last_focused_output)
             .or(self.current_output)
+    }
+
+    fn clear_keyboard_focus(&mut self) {
+        self.focused_window = None;
+        if let Some(seat_id) = self.current_seat {
+            if let Some(seat) = self.seats.get(&seat_id) {
+                seat.borrow().clear_focus();
+            }
+        }
+    }
+
+    fn restore_focus_from_stack(&mut self) {
+        if self.focused_window.is_some() {
+            return;
+        }
+
+        let preferred_output = self.current_output.or(self.last_focused_output);
+        let mut candidate = None;
+
+        if let Some(output_id) = preferred_output {
+            for &window_id in &self.focus_stack {
+                let Some(window) = self.windows.get(&window_id) else {
+                    continue;
+                };
+                let w = window.borrow();
+                if w.hidden {
+                    continue;
+                }
+                let matches_output = w
+                    .output
+                    .as_ref()
+                    .and_then(|output| output.upgrade())
+                    .map(|output| output.borrow().id)
+                    == Some(output_id);
+                if matches_output {
+                    candidate = Some(window_id);
+                    break;
+                }
+            }
+        }
+
+        if candidate.is_none() {
+            for &window_id in &self.focus_stack {
+                let Some(window) = self.windows.get(&window_id) else {
+                    continue;
+                };
+                if !window.borrow().hidden {
+                    candidate = Some(window_id);
+                    break;
+                }
+            }
+        }
+
+        if let Some(window_id) = candidate {
+            self.focus(window_id);
+        } else {
+            self.clear_keyboard_focus();
+        }
     }
 
     fn output_for_window_id(&self, window_id: WindowId) -> Option<OutputId> {

@@ -96,6 +96,11 @@ pub enum Action {
     /// Activate selected window menu item
     WindowMenuCommit,
 
+    /// Clear keyboard focus
+    ClearFocus,
+    /// Restore keyboard focus to the last focused window
+    RestoreFocus,
+
     /// Custom function action
     CustomFn { func: CustomFn, arg: Arg },
 }

@@ -1731,9 +1731,15 @@ impl Dispatch<RiverLayerShellSeatV1, canoe::SeatId> for AppState {
             match event {
                 Event::FocusExclusive => {
                     seat.borrow_mut().focus_exclusive = true;
+                    seat.borrow_mut().queue_action(binding::Action::ClearFocus);
                 }
-                Event::FocusNonExclusive | Event::FocusNone => {
+                Event::FocusNonExclusive => {
                     seat.borrow_mut().focus_exclusive = false;
+                }
+                Event::FocusNone => {
+                    seat.borrow_mut().focus_exclusive = false;
+                    seat.borrow_mut()
+                        .queue_action(binding::Action::RestoreFocus);
                 }
             }
         }
