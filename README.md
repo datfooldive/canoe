@@ -1,5 +1,7 @@
 # Canoe 🛶 - River Window Manager
 
+![Canoe screenshot](./assets/canoe-screenshot-1.png)
+
 A stacking window manager for the River Wayland compositor, written in Rust.
 
 ## Building
