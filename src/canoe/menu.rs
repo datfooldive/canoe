@@ -37,6 +37,7 @@ pub struct WindowMenu {
     pub scale: i32,
     pub configured: bool,
     pub items: Vec<MenuItem>,
+    pub header_title: Option<String>,
     pub hovered: Option<usize>,
     pub output_id: OutputId,
     pub origin_x: i32,
@@ -64,6 +65,8 @@ pub struct MenuTheme {
     pub text: u32,
     pub highlight_bg: u32,
     pub highlight_text: u32,
+    pub titlebar_bg: u32,
+    pub titlebar_text: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -76,7 +79,10 @@ struct MenuCacheKey {
     text: u32,
     highlight_bg: u32,
     highlight_text: u32,
+    titlebar_bg: u32,
+    titlebar_text: u32,
     items_hash: u64,
+    header_hash: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -94,21 +100,25 @@ impl MenuTheme {
             text: ui.menu_text,
             highlight_bg: ui.menu_highlight_bg,
             highlight_text: ui.menu_highlight_text,
+            titlebar_bg: ui.titlebar_bg_active,
+            titlebar_text: ui.titlebar_text_active,
         }
     }
 }
 
 impl WindowMenu {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         surface: wl_surface::WlSurface,
         layer_surface: ZwlrLayerSurfaceV1,
         output_id: OutputId,
         items: Vec<MenuItem>,
+        header_title: Option<String>,
         origin_x: i32,
         origin_y: i32,
         theme: MenuTheme,
     ) -> Self {
-        let (width, height) = measure_menu(&items, &theme);
+        let (width, height) = measure_menu(&items, &theme, header_title.as_deref());
         Self {
             surface,
             layer_surface,
@@ -123,6 +133,7 @@ impl WindowMenu {
             scale: 1,
             configured: false,
             items,
+            header_title,
             hovered: None,
             output_id,
             origin_x,
@@ -147,8 +158,12 @@ impl WindowMenu {
             return None;
         }
 
+        let header_h = self.header_height();
         let item_h = item_height(&self.theme);
-        let idx = ((y - content_y) / item_h) as usize;
+        if y < content_y + header_h {
+            return None;
+        }
+        let idx = ((y - content_y - header_h) / item_h) as usize;
         if idx < self.items.len() {
             Some(idx)
         } else {
@@ -281,6 +296,20 @@ impl WindowMenu {
             return;
         }
 
+        let theme = self.theme.clone();
+        let header_title = self.header_title.clone();
+        let hovered_idx = self.hovered;
+        let hovered_item = hovered_idx.and_then(|idx| self.items.get(idx).cloned());
+        let item_h = item_height(&theme);
+        let header_h = if header_title.is_some() { item_h } else { 0 };
+        let scale = self.scale.max(1);
+        let row_ctx = MenuRowContext {
+            menu_w,
+            item_h,
+            scale,
+            theme: &theme,
+        };
+
         let Some(ref mut mmap) = self.mmap else {
             return;
         };
@@ -300,19 +329,9 @@ impl WindowMenu {
             None => return,
         };
 
-        let item_h = item_height(&self.theme);
-        let scale = self.scale.max(1);
-        let row_ctx = MenuRowContext {
-            menu_w,
-            item_h,
-            scale,
-            theme: &self.theme,
-        };
-        if let Some(idx) = self.hovered {
-            if let Some(item) = self.items.get(idx) {
-                let row_y = MENU_BORDER + (idx as i32 * item_h);
-                draw_menu_row(&mut renderer, item, row_y, true, &row_ctx);
-            }
+        if let (Some(idx), Some(item)) = (hovered_idx, hovered_item.as_ref()) {
+            let row_y = MENU_BORDER + header_h + (idx as i32 * item_h);
+            draw_menu_row(&mut renderer, item, row_y, true, &row_ctx);
         }
     }
 
@@ -351,6 +370,14 @@ impl WindowMenu {
     fn menu_height(&self) -> i32 {
         (self.height - SHADOW_SIZE).max(0)
     }
+
+    fn header_height(&self) -> i32 {
+        if self.header_title.is_some() {
+            item_height(&self.theme)
+        } else {
+            0
+        }
+    }
 }
 
 impl Drop for WindowMenu {
@@ -371,7 +398,7 @@ fn item_height(theme: &MenuTheme) -> i32 {
     (font_h + ITEM_PADDING_Y * 2).max(1)
 }
 
-fn measure_menu(items: &[MenuItem], theme: &MenuTheme) -> (i32, i32) {
+fn measure_menu(items: &[MenuItem], theme: &MenuTheme, header_title: Option<&str>) -> (i32, i32) {
     let mut max_width = 0.0f32;
     let mut has_font = false;
     for item in items {
@@ -384,14 +411,24 @@ fn measure_menu(items: &[MenuItem], theme: &MenuTheme) -> (i32, i32) {
             }
         }
     }
+    if let Some(title) = header_title {
+        if let Some(width) = font::measure_text(theme.font_name.as_deref(), theme.font_size, title)
+        {
+            has_font = true;
+            if width > max_width {
+                max_width = width;
+            }
+        }
+    }
+    let row_count = items.len() as i32 + if header_title.is_some() { 1 } else { 0 };
     if !has_font {
         let menu_w = 120;
-        let menu_h = (items.len() as i32 * item_height(theme)).max(1) + MENU_BORDER * 2;
+        let menu_h = (row_count * item_height(theme)).max(1) + MENU_BORDER * 2;
         return (menu_w + SHADOW_SIZE, menu_h + SHADOW_SIZE);
     }
 
     let content_w = ITEM_PADDING_X * 2 + ICON_SIZE + ICON_GAP + max_width.ceil() as i32;
-    let content_h = item_height(theme) * items.len() as i32;
+    let content_h = item_height(theme) * row_count;
     let menu_w = content_w + MENU_BORDER * 2;
     let menu_h = content_h + MENU_BORDER * 2;
     (menu_w + SHADOW_SIZE, menu_h + SHADOW_SIZE)
@@ -408,6 +445,15 @@ fn items_hash(items: &[MenuItem]) -> u64 {
     hasher.finish()
 }
 
+fn header_hash(header_title: Option<&str>) -> u64 {
+    let Some(title) = header_title else {
+        return 0;
+    };
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    title.hash(&mut hasher);
+    hasher.finish()
+}
+
 impl WindowMenu {
     fn cache_key(&self) -> MenuCacheKey {
         MenuCacheKey {
@@ -419,7 +465,10 @@ impl WindowMenu {
             text: self.theme.text,
             highlight_bg: self.theme.highlight_bg,
             highlight_text: self.theme.highlight_text,
+            titlebar_bg: self.theme.titlebar_bg,
+            titlebar_text: self.theme.titlebar_text,
             items_hash: items_hash(&self.items),
+            header_hash: header_hash(self.header_title.as_deref()),
         }
     }
 
@@ -466,14 +515,18 @@ impl WindowMenu {
         );
 
         let item_h = item_height(&self.theme);
+        let header_h = self.header_height();
         let row_ctx = MenuRowContext {
             menu_w,
             item_h,
             scale,
             theme: &self.theme,
         };
+        if let Some(title) = self.header_title.as_deref() {
+            draw_menu_header(&mut renderer, title, MENU_BORDER, &row_ctx);
+        }
         for (idx, item) in self.items.iter().enumerate() {
-            let row_y = MENU_BORDER + (idx as i32 * item_h);
+            let row_y = MENU_BORDER + header_h + (idx as i32 * item_h);
             draw_menu_row(&mut renderer, item, row_y, false, &row_ctx);
         }
 
@@ -487,6 +540,34 @@ struct MenuRowContext<'a> {
     item_h: i32,
     scale: i32,
     theme: &'a MenuTheme,
+}
+
+fn draw_menu_header(renderer: &mut Renderer, title: &str, row_y: i32, ctx: &MenuRowContext<'_>) {
+    let bg = rgba_to_argb(ctx.theme.titlebar_bg);
+    let text_color = rgba_to_argb(ctx.theme.titlebar_text);
+
+    renderer.fill_rect(
+        MENU_BORDER * ctx.scale,
+        row_y * ctx.scale,
+        (ctx.menu_w - MENU_BORDER * 2) * ctx.scale,
+        ctx.item_h * ctx.scale,
+        bg,
+    );
+
+    let text_start_x = MENU_BORDER + ITEM_PADDING_X;
+    let text_area_w = ctx.menu_w - MENU_BORDER * 2 - text_start_x + MENU_BORDER;
+    renderer.render_text(
+        title,
+        text_start_x * ctx.scale,
+        row_y * ctx.scale,
+        text_area_w * ctx.scale,
+        ctx.item_h * ctx.scale,
+        ctx.scale,
+        text_color,
+        ctx.theme.font_size,
+        ctx.theme.font_name.as_deref(),
+        0,
+    );
 }
 
 fn draw_menu_row(

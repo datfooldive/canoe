@@ -141,6 +141,7 @@ fn render_window_menu(state: &mut AppState, qh: &QueueHandle<AppState>) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn open_window_menu_with_items(
     state: &mut AppState,
     output_id: canoe::OutputId,
@@ -148,6 +149,7 @@ fn open_window_menu_with_items(
     centered: bool,
     mode: canoe::WindowMenuMode,
     items: Vec<canoe::MenuItem>,
+    header_title: Option<String>,
     qh: &QueueHandle<AppState>,
 ) {
     let (Some(compositor), Some(layer_shell)) = (
@@ -191,6 +193,7 @@ fn open_window_menu_with_items(
         layer_surface,
         output_id,
         items,
+        header_title,
         pointer.0,
         pointer.1,
         menu_theme,
@@ -245,6 +248,7 @@ fn open_window_menu_with_items(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn open_window_menu(
     state: &mut AppState,
     output_id: canoe::OutputId,
@@ -252,6 +256,7 @@ fn open_window_menu(
     pointer_y: i32,
     centered: bool,
     mode: canoe::WindowMenuMode,
+    header_title: Option<String>,
     qh: &QueueHandle<AppState>,
 ) {
     let items = {
@@ -265,6 +270,7 @@ fn open_window_menu(
         centered,
         mode,
         items,
+        header_title,
         qh,
     );
 }
@@ -599,6 +605,7 @@ fn handle_window_menu_cycle(state: &mut AppState, qh: &QueueHandle<AppState>) {
         0,
         true,
         canoe::WindowMenuMode::AltTab,
+        Some("Windows".to_string()),
         qh,
     );
     ensure_window_menu_shield(state, output_id, qh);
@@ -706,6 +713,7 @@ fn handle_window_menu_cycle_app(state: &mut AppState, qh: &QueueHandle<AppState>
         true,
         canoe::WindowMenuMode::AltTab,
         items,
+        Some(app_id),
         qh,
     );
     ensure_window_menu_shield(state, output_id, qh);
@@ -2263,6 +2271,7 @@ impl Dispatch<wl_pointer::WlPointer, canoe::SeatId> for AppState {
                                             py,
                                             false,
                                             canoe::WindowMenuMode::Pointer,
+                                            Some("Windows".to_string()),
                                             _qh,
                                         );
                                         update_menu_hover_from_global(state, *seat_id, _qh);
