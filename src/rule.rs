@@ -48,6 +48,8 @@ impl Pattern {
 pub struct Rule {
     /// App ID pattern to match
     pub app_id: Option<Vec<String>>,
+    /// App ID prefix to match
+    pub app_id_prefixes: Option<Vec<String>>,
     /// Title pattern to match (can be regex)
     pub title: Option<Vec<String>>,
     /// Regex pattern for app_id
@@ -75,8 +77,13 @@ impl Rule {
         decoration_hint: u32,
         has_parent: bool,
     ) -> bool {
-        // If both app_id and title are None/empty, match the rule for empty windows
-        if self.app_id.is_none() && self.title.is_none() {
+        // If no app_id/title criteria are set, match the rule for empty windows
+        if self.app_id.is_none()
+            && self.app_id_regex.is_none()
+            && self.app_id_prefixes.is_none()
+            && self.title.is_none()
+            && self.title_regex.is_none()
+        {
             // This is a rule for windows with no app_id or title
             let app_empty = app_id.is_none() || app_id.map(|s| s.is_empty()).unwrap_or(true);
             let title_empty = title.is_none() || title.map(|s| s.is_empty()).unwrap_or(true);
@@ -84,11 +91,24 @@ impl Rule {
         }
 
         // Check app_id match
-        let app_id_matches = match (&self.app_id, &self.app_id_regex, app_id) {
-            (Some(patterns), _, Some(id)) => patterns.iter().any(|p| p == id),
-            (_, Some(regex), Some(id)) => regex.is_match(id),
-            (None, None, _) => true, // No app_id requirement
-            _ => false,
+        let has_app_id_criteria =
+            self.app_id.is_some() || self.app_id_regex.is_some() || self.app_id_prefixes.is_some();
+        let app_id_matches = if !has_app_id_criteria {
+            true
+        } else if let Some(id) = app_id {
+            let mut matches = false;
+            if let Some(patterns) = &self.app_id {
+                matches |= patterns.iter().any(|p| p == id);
+            }
+            if let Some(regex) = &self.app_id_regex {
+                matches |= regex.is_match(id);
+            }
+            if let Some(prefixes) = &self.app_id_prefixes {
+                matches |= prefixes.iter().any(|p| id.starts_with(p));
+            }
+            matches
+        } else {
+            false
         };
 
         // Check title match
@@ -177,6 +197,18 @@ mod tests {
         assert!(rule.matches(Some("foot"), None, 3, false));
         assert!(rule.matches(Some("foot"), Some("Terminal"), 3, false));
         assert!(!rule.matches(Some("chromium"), None, 3, false));
+    }
+
+    #[test]
+    fn test_rule_matching_prefix() {
+        let rule = Rule {
+            app_id_prefixes: Some(vec!["mate-".to_string()]),
+            ..Default::default()
+        };
+
+        assert!(rule.matches(Some("mate-dictionary"), None, 3, false));
+        assert!(rule.matches(Some("mate-calc"), None, 3, false));
+        assert!(!rule.matches(Some("gnome-calculator"), None, 3, false));
     }
 
     #[test]

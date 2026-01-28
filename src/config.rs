@@ -213,12 +213,12 @@ enum StringOrVec {
 
 #[derive(Debug, Deserialize)]
 struct RuleFile {
-    app_id: Option<StringOrVec>,
+    match_app_id: Option<StringOrVec>,
+    match_app_id_prefix: Option<StringOrVec>,
+    match_props: Option<StringOrVec>,
     title: Option<StringOrVec>,
     app_id_regex: Option<String>,
     title_regex: Option<String>,
-    require_csd_only: Option<bool>,
-    require_no_parent: Option<bool>,
     decoration: Option<String>,
     swallow_top: Option<i32>,
 }
@@ -351,6 +351,22 @@ fn string_or_vec(value: Option<StringOrVec>) -> Option<Vec<String>> {
     }
 }
 
+fn parse_match_props(value: Option<StringOrVec>) -> (Option<bool>, Option<bool>) {
+    let props = string_or_vec(value).unwrap_or_default();
+    let mut require_csd_only = None;
+    let mut require_no_parent = None;
+
+    for prop in props {
+        match prop.as_str() {
+            "csd_only" => require_csd_only = Some(true),
+            "toplevel" => require_no_parent = Some(true),
+            _ => {}
+        }
+    }
+
+    (require_csd_only, require_no_parent)
+}
+
 fn clean_cmd_args(values: Vec<String>) -> Vec<String> {
     values
         .into_iter()
@@ -383,15 +399,20 @@ fn config_path() -> Option<PathBuf> {
 fn rules_from_file(rules: Vec<RuleFile>) -> Vec<Rule> {
     rules
         .into_iter()
-        .map(|rule| Rule {
-            app_id: string_or_vec(rule.app_id),
-            title: string_or_vec(rule.title),
-            app_id_regex: compile_regex(rule.app_id_regex),
-            title_regex: compile_regex(rule.title_regex),
-            require_csd_only: rule.require_csd_only,
-            require_no_parent: rule.require_no_parent,
-            decoration: parse_decoration(rule.decoration),
-            swallow_top: rule.swallow_top,
+        .map(|rule| {
+            let (require_csd_only, require_no_parent) = parse_match_props(rule.match_props);
+
+            Rule {
+                app_id: string_or_vec(rule.match_app_id),
+                app_id_prefixes: string_or_vec(rule.match_app_id_prefix),
+                title: string_or_vec(rule.title),
+                app_id_regex: compile_regex(rule.app_id_regex),
+                title_regex: compile_regex(rule.title_regex),
+                require_csd_only,
+                require_no_parent,
+                decoration: parse_decoration(rule.decoration),
+                swallow_top: rule.swallow_top,
+            }
         })
         .collect()
 }
@@ -427,6 +448,54 @@ pub fn load_config() -> Config {
 /// Get default window rules
 fn default_rules() -> Vec<Rule> {
     Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rule_parsing_match_app_id_and_props() {
+        let contents = r#"
+            [[rules]]
+            match_app_id = ["foot", "kitty"]
+            match_props = ["toplevel", "csd_only"]
+
+            [[rules]]
+            match_app_id = "alacritty"
+            match_props = "toplevel"
+
+            [[rules]]
+            match_app_id_prefix = "mate-"
+        "#;
+
+        let file_config = toml::from_str::<FileConfig>(contents).expect("parse config");
+        let rules = rules_from_file(file_config.rules.expect("rules present"));
+
+        assert_eq!(rules.len(), 3);
+
+        let rule = &rules[0];
+        let app_ids = rule.app_id.as_ref().expect("app ids parsed");
+        assert!(app_ids.contains(&"foot".to_string()));
+        assert!(app_ids.contains(&"kitty".to_string()));
+        assert_eq!(rule.require_csd_only, Some(true));
+        assert_eq!(rule.require_no_parent, Some(true));
+
+        let rule = &rules[1];
+        let app_ids = rule.app_id.as_ref().expect("app ids parsed");
+        assert_eq!(app_ids, &vec!["alacritty".to_string()]);
+        assert_eq!(rule.require_csd_only, None);
+        assert_eq!(rule.require_no_parent, Some(true));
+
+        let rule = &rules[2];
+        let prefixes = rule
+            .app_id_prefixes
+            .as_ref()
+            .expect("app id prefixes parsed");
+        assert_eq!(prefixes, &vec!["mate-".to_string()]);
+        assert_eq!(rule.require_csd_only, None);
+        assert_eq!(rule.require_no_parent, None);
+    }
 }
 
 /// Helper module for home directory
