@@ -7,11 +7,12 @@ A stacking window manager for the River Wayland compositor, written in Rust.
 ## Features
 
 - Stacking window management
-- Forced server-side decorations with classic window borders & titlebars
+- Server-side decorations with classic window borders & titlebars
 - Titlebar/edge window movement and resizing (Super+Drag anywhere)
 - Multihead support (focus/send windows across outputs)
 - Window switcher (keyboard cycle + desktop right-click menu)
 - Window focus follows click
+- Optional forcing server-side decorations via per-window rules
 - Optional "swallowing" of client-side decoration via per-window rules
 
 ## Installation
@@ -20,22 +21,18 @@ A stacking window manager for the River Wayland compositor, written in Rust.
 cargo install canoe
 ```
 
-## Building
+## Running
+
+```bash
+river -c canoe
+```
+
+## Building From Source
 
 ```bash
 cargo build --release
 ```
 
-## Running
-
-```bash
-river -c ./target/release/canoe
-```
-
-For debug output:
-```bash
-RUST_LOG=info river -c ./target/release/canoe
-```
 
 ## Keyboard Shortcuts
 
@@ -134,7 +131,8 @@ the client-side decoration on my Firefox, for instance:
 ```toml
 match_app_id = "firefox-esr"
 match_props = "toplevel"
-swallow_top = 38
+force_ssd = true
+swallow_top = 48
 ```
 
 ## Requirements
