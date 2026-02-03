@@ -239,20 +239,19 @@ impl Context {
             window.parent.is_some(),
         );
 
-        if let Some(decoration) = applied.decoration {
-            window.decoration = Some(decoration);
-        } else {
-            // Force SSD unless explicitly overridden by a rule.
-            window.decoration = Some(WindowDecoration::Ssd);
-        }
-        window.set_swallow_top(applied.swallow_top.unwrap_or(0));
+        // hint 0 = only_supports_csd, hint 1 = prefers_csd
+        // Respect CSD preference for both cases
+        let prefers_csd = matches!(window.decoration_hint, Some(0) | Some(1));
 
-        if matches!(window.decoration, Some(WindowDecoration::Csd)) {
-            window.titlebar = None;
-            window.titlebar_hovered = None;
-            window.titlebar_pressed = None;
-            window.titlebar_left_down = false;
-        }
+        let decoration = if applied.force_ssd {
+            WindowDecoration::Ssd
+        } else if prefers_csd {
+            WindowDecoration::Csd
+        } else {
+            WindowDecoration::Ssd
+        };
+        window.decoration = Some(decoration);
+        window.set_swallow_top(applied.swallow_top.unwrap_or(0));
     }
 
     /// Focus a window
@@ -1076,7 +1075,7 @@ impl Context {
                 w.y,
                 w.width,
                 w.height,
-                w.titlebar.is_some(),
+                w.decoration == Some(WindowDecoration::Ssd),
                 w.swallow_top,
             )
         };
@@ -1204,8 +1203,6 @@ impl Context {
     }
 
     pub(crate) fn maximize_window(&mut self, window_id: WindowId) {
-        let border_width = self.config.ui.border_width;
-        let titlebar_height = super::titlebar::titlebar_height(&self.config.ui);
         self.update_window_output_from_position(window_id);
 
         let output_id = self
@@ -1228,6 +1225,22 @@ impl Context {
             let (ox, oy, ow, oh) = out.usable_area();
             (ox, oy, ow, oh)
         };
+
+        // Only account for borders/titlebar if window uses SSD
+        let has_ssd = self
+            .windows
+            .get(&window_id)
+            .map(|w| w.borrow().decoration == Some(WindowDecoration::Ssd))
+            .unwrap_or(false);
+        let (border_width, titlebar_height) = if has_ssd {
+            (
+                self.config.ui.border_width,
+                super::titlebar::titlebar_height(&self.config.ui),
+            )
+        } else {
+            (0, 0)
+        };
+
         let swallow_top = self
             .windows
             .get(&window_id)
@@ -1305,8 +1318,6 @@ impl Context {
     fn smart_snap_half(&mut self, window_id: WindowId, side: crate::binding::action::SnapSide) {
         use super::window::{FullscreenState, SnapState};
 
-        let border_width = self.config.ui.border_width;
-        let titlebar_height = super::titlebar::titlebar_height(&self.config.ui);
         self.update_window_output_from_position(window_id);
 
         let output_id = self
@@ -1329,6 +1340,22 @@ impl Context {
             let (ox, oy, ow, oh) = out.usable_area();
             (ox, oy, ow, oh)
         };
+
+        // Only account for borders/titlebar if window uses SSD
+        let has_ssd = self
+            .windows
+            .get(&window_id)
+            .map(|w| w.borrow().decoration == Some(WindowDecoration::Ssd))
+            .unwrap_or(false);
+        let (border_width, titlebar_height) = if has_ssd {
+            (
+                self.config.ui.border_width,
+                super::titlebar::titlebar_height(&self.config.ui),
+            )
+        } else {
+            (0, 0)
+        };
+
         let swallow_top = self
             .windows
             .get(&window_id)

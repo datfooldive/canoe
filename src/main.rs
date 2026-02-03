@@ -945,8 +945,8 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                     for (&window_id, window) in &context.windows {
                         let mut w = window.borrow_mut();
 
-                        // Skip hidden windows
-                        if w.hidden {
+                        // Skip hidden windows or CSD windows (no titlebar for CSD)
+                        if w.hidden || w.decoration == Some(crate::config::WindowDecoration::Csd) {
                             continue;
                         }
 
@@ -1248,10 +1248,8 @@ impl Dispatch<RiverWindowV1, canoe::WindowId> for AppState {
             Event::DecorationHint {
                 hint: wayland_client::WEnum::Value(h),
             } => {
-                // Convert WEnum to u32
-                let hint = h as u32;
                 let mut w = window.borrow_mut();
-                w.decoration_hint = hint;
+                w.decoration_hint = Some(h as u32);
                 state.context.borrow().apply_rules_to_window(&mut w);
             }
             Event::UnreliablePid { unreliable_pid } => {
