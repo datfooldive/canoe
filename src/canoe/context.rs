@@ -137,7 +137,11 @@ impl Context {
 
         // Update focused window if necessary
         if self.focused_window == Some(window_id) {
-            self.focused_window = self.focus_stack.first().copied();
+            if let Some(&next_id) = self.focus_stack.first() {
+                self.focus(next_id);
+            } else {
+                self.clear_keyboard_focus();
+            }
         }
 
         self.windows.remove(&window_id);
