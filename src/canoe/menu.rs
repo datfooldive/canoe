@@ -100,8 +100,8 @@ impl MenuTheme {
             text: ui.menu_text,
             highlight_bg: ui.menu_highlight_bg,
             highlight_text: ui.menu_highlight_text,
-            titlebar_bg: ui.titlebar_bg_active,
-            titlebar_text: ui.titlebar_text_active,
+            titlebar_bg: ui.titlebar_bg_inactive,
+            titlebar_text: ui.titlebar_text_inactive,
         }
     }
 }
