@@ -12,6 +12,7 @@ A stacking window manager for the River Wayland compositor, written in Rust.
 - Multihead support (focus/send windows across outputs)
 - Window switcher (keyboard cycle + desktop right-click menu)
 - Window focus follows click
+- Minimized windows shown as icons on the desktop (can be disabled)
 - Optional forcing server-side decorations via per-window rules
 - Optional "swallowing" of client-side decoration via per-window rules
 
