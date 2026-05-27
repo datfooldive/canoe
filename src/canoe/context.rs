@@ -1700,19 +1700,62 @@ impl Context {
                 }
             }
             WindowEvent::Fullscreen(output) => {
+                // The xdg-shell `set_fullscreen` request allows the client to
+                // pass a NULL output, meaning "let the compositor pick". River
+                // forwards that as `Option<Weak<Output>> = None`, so we must
+                // resolve a fallback target here instead of silently dropping
+                // the request.
+                let target = output
+                    .and_then(|o| o.upgrade())
+                    .or_else(|| {
+                        self.windows.get(&window_id).and_then(|w| {
+                            w.borrow().output.as_ref().and_then(|o| o.upgrade())
+                        })
+                    })
+                    .or_else(|| {
+                        self.current_output
+                            .and_then(|id| self.outputs.get(&id).cloned())
+                    })
+                    .or_else(|| self.outputs.values().next().cloned());
+
                 if let Some(window) = self.windows.get(&window_id) {
                     let mut w = window.borrow_mut();
-                    // Handle fullscreen request
                     if w.pre_fullscreen.is_none() {
+                        // A client that requests fullscreen immediately on
+                        // creation has w.width/height still at 0 (the windowed
+                        // configure cycle never completed). Saving (0, 0) here
+                        // would restore the window to nothing on unfullscreen,
+                        // so fall back to half the target output's usable area
+                        // and centre it within that area instead of pinning to
+                        // the top-left corner.
+                        let usable = target.as_ref().map(|out| out.borrow().usable_area());
+                        let (saved_w, saved_h) = if w.width > 0 && w.height > 0 {
+                            (w.width, w.height)
+                        } else {
+                            match usable {
+                                Some((_, _, ow, oh)) if ow > 0 && oh > 0 => (ow / 2, oh / 2),
+                                _ => (800, 600),
+                            }
+                        };
+                        let (saved_x, saved_y) = if !w.position_undefined {
+                            (w.x, w.y)
+                        } else if let Some((ux, uy, ow, oh)) = usable {
+                            (
+                                ux + ((ow - saved_w) / 2).max(0),
+                                uy + ((oh - saved_h) / 2).max(0),
+                            )
+                        } else {
+                            (w.x, w.y)
+                        };
                         w.pre_fullscreen = Some(super::window::SavedGeometry {
-                            x: w.x,
-                            y: w.y,
-                            width: w.width,
-                            height: w.height,
+                            x: saved_x,
+                            y: saved_y,
+                            width: saved_w,
+                            height: saved_h,
                         });
                     }
                     w.pending_unfullscreen_restore = false;
-                    if let Some(output) = output.and_then(|o| o.upgrade()) {
+                    if let Some(output) = target {
                         if let Some(ref rwm_output) = output.borrow().rwm_output {
                             w.fullscreen_on(rwm_output);
                             w.fullscreen =
