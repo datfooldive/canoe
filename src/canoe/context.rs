@@ -2,7 +2,7 @@
 
 use crate::binding::{Action, Direction, PointerBinding, XkbBinding};
 use crate::config::{load_config, Config, WindowDecoration};
-use crate::protocol::river_window_management_v1::client::river_window_v1::Edges;
+use crate::protocol::river_window_management_v1::client::river_window_v1::{Capabilities, Edges};
 use crate::protocol::*;
 use crate::rule;
 use resvg::tiny_skia;
@@ -270,6 +270,22 @@ impl Context {
         };
         window.decoration = Some(decoration);
         window.set_swallow_top(applied.swallow_top.unwrap_or(0));
+
+        // Inform the client which window-management capabilities apply.
+        // Parented dialogs: close only.
+        // Fixed-size toplevels: no maximize/fullscreen, but minimize stays.
+        // Regular windows: full set.
+        let caps = if window.is_dialog() {
+            Capabilities::empty()
+        } else if window.is_fixed_size() {
+            Capabilities::WindowMenu | Capabilities::Minimize
+        } else {
+            Capabilities::WindowMenu
+                | Capabilities::Maximize
+                | Capabilities::Fullscreen
+                | Capabilities::Minimize
+        };
+        window.set_capabilities(caps);
     }
 
     /// Focus a window
@@ -1097,6 +1113,12 @@ impl Context {
         // Now resize the focused window
         if let Some(window_id) = self.focused_window {
             if let Some(window) = self.windows.get(&window_id) {
+                // Fixed-size toplevels and dialogs are not resizable; the
+                // modifier+drag gesture must not start a resize on them (the
+                // window stays focused from the step above).
+                if !window.borrow().is_resizable() {
+                    return;
+                }
                 if let Some(seat) = self.seats.get(&seat_id) {
                     let edges = {
                         let mut w = window.borrow_mut();
@@ -1139,7 +1161,7 @@ impl Context {
             (seat_ref.pointer_x, seat_ref.pointer_y)
         };
 
-        let (x, y, width, height, has_titlebar, swallow_top) = {
+        let (x, y, width, height, has_titlebar, swallow_top, is_resizable, show_min, show_max) = {
             let w = window.borrow();
             (
                 w.x,
@@ -1148,6 +1170,9 @@ impl Context {
                 w.height,
                 w.decoration == Some(WindowDecoration::Ssd),
                 w.swallow_top,
+                w.is_resizable(),
+                w.has_minimize_button(),
+                w.has_maximize_button(),
             )
         };
 
@@ -1158,15 +1183,19 @@ impl Context {
         let frame_y = y - border_width - titlebar_height + swallow_top;
         let frame_width = width + border_width * 2;
         let frame_height = height + border_width * 2 + titlebar_height - swallow_top;
-        let edges = calculate_resize_edges_near_border(
-            frame_x,
-            frame_y,
-            frame_width,
-            frame_height,
-            border_width,
-            px,
-            py,
-        );
+        let edges = if !is_resizable {
+            0
+        } else {
+            calculate_resize_edges_near_border(
+                frame_x,
+                frame_y,
+                frame_width,
+                frame_height,
+                border_width,
+                px,
+                py,
+            )
+        };
 
         if edges != 0 {
             {
@@ -1188,12 +1217,19 @@ impl Context {
 
             if local_x >= 0 && local_x < width && local_y >= 0 && local_y < titlebar_height {
                 let titlebar_height = super::titlebar::titlebar_height(&self.config.ui);
-                let buttons = super::titlebar::button_rects(width, titlebar_height);
+                let buttons =
+                    super::titlebar::button_rects(width, titlebar_height, show_min, show_max);
 
-                if buttons.close.contains(local_x, local_y)
-                    || buttons.hide.contains(local_x, local_y)
-                    || buttons.maximize.contains(local_x, local_y)
-                {
+                let on_button = buttons.close.contains(local_x, local_y)
+                    || buttons
+                        .hide
+                        .map(|r| r.contains(local_x, local_y))
+                        .unwrap_or(false)
+                    || buttons
+                        .maximize
+                        .map(|r| r.contains(local_x, local_y))
+                        .unwrap_or(false);
+                if on_button {
                     return;
                 }
 
@@ -1694,7 +1730,21 @@ impl Context {
                             }
                         })
                         .unwrap_or((800, 600));
-                    w.propose_dimensions(default_width, default_height);
+                    // Cap by the client's max-size hint when set. For
+                    // fixed-size windows (typical of dialogs) the hint has
+                    // min == max, so propose_dimensions ends up at exactly
+                    // that size after its min-clamp.
+                    let proposed_width = if w.max_width > 0 {
+                        default_width.min(w.max_width)
+                    } else {
+                        default_width
+                    };
+                    let proposed_height = if w.max_height > 0 {
+                        default_height.min(w.max_height)
+                    } else {
+                        default_height
+                    };
+                    w.propose_dimensions(proposed_width, proposed_height);
                 }
 
                 // Focus the new window
@@ -1798,6 +1848,9 @@ impl Context {
                 if let Some(window) = self.windows.get(&window_id) {
                     if let Some(seat) = seat.upgrade() {
                         let mut w = window.borrow_mut();
+                        if !w.is_resizable() {
+                            return;
+                        }
                         w.clear_maximized_without_restore();
                         w.start_resize(Rc::downgrade(&seat), edges);
                         seat.borrow().start_pointer_op();
@@ -1819,7 +1872,7 @@ impl Context {
         }
 
         // Process each window
-        for (window_id, window) in &self.windows {
+        for window in self.windows.values() {
             let mut w = window.borrow_mut();
 
             // Check if window should be visible
@@ -1844,21 +1897,134 @@ impl Context {
                 w.show();
 
                 // Disable compositor borders; custom decoration handles borders.
-                let is_focused = self.focused_window == Some(*window_id);
                 let edges = Edges::all();
                 w.set_borders(edges, 0, 0, 0, 0, 0);
-
-                // Raise focused window
-                if is_focused {
-                    w.place_top();
-                }
             } else {
                 w.hide();
             }
         }
+
+        // Raise the focused window's root ancestor to the top. For a focused
+        // dialog this lifts the whole parent chain so the chains-above-parents
+        // pass below ends up stacking the focused child at the very top.
+        if let Some(focused_id) = self.focused_window {
+            let root_id = self.root_ancestor(focused_id);
+            if let Some(root) = self.windows.get(&root_id) {
+                let root = root.borrow();
+                if !root.hidden {
+                    root.place_top();
+                }
+            }
+        }
+
+        // Dialogs render directly above their parent (river-window-management-v1
+        // recommends this for parented windows). Process by parent-chain depth
+        // so nested dialogs end up stacked above their immediate parent without
+        // disturbing the order established by deeper iterations.
+        let mut chains: Vec<(WindowId, WindowId, usize)> = self
+            .windows
+            .iter()
+            .filter_map(|(&id, w)| w.borrow().parent.map(|p| (id, p, self.parent_chain_depth(id))))
+            .collect();
+        chains.sort_by_key(|&(_, _, depth)| depth);
+        for (child_id, parent_id, _) in chains {
+            let (Some(child), Some(parent)) = (
+                self.windows.get(&child_id),
+                self.windows.get(&parent_id),
+            ) else {
+                continue;
+            };
+            let c = child.borrow();
+            if c.hidden {
+                continue;
+            }
+            c.place_above(&parent.borrow());
+        }
+    }
+
+    /// Number of ancestors a window has via its parent chain (0 if no parent).
+    /// Cycles are not possible per the river protocol but we cap iteration
+    /// defensively at the total window count.
+    fn parent_chain_depth(&self, window_id: WindowId) -> usize {
+        let mut depth = 0usize;
+        let mut current = window_id;
+        let limit = self.windows.len();
+        while depth <= limit {
+            let Some(window) = self.windows.get(&current) else {
+                break;
+            };
+            let Some(parent) = window.borrow().parent else {
+                break;
+            };
+            depth += 1;
+            current = parent;
+        }
+        depth
+    }
+
+    /// The topmost ancestor reachable via the parent chain, or the window
+    /// itself if it has no (known) parent.
+    fn root_ancestor(&self, window_id: WindowId) -> WindowId {
+        let mut current = window_id;
+        let limit = self.windows.len();
+        for _ in 0..=limit {
+            let parent = self
+                .windows
+                .get(&current)
+                .and_then(|w| w.borrow().parent)
+                .filter(|p| self.windows.contains_key(p));
+            match parent {
+                Some(p) => current = p,
+                None => break,
+            }
+        }
+        current
     }
 
     fn apply_initial_positions(&mut self) {
+        // Dialogs (windows with a parent) get centred over their parent
+        // rather than being cascaded along with regular toplevels.
+        let titlebar_h = super::titlebar::titlebar_height(&self.config.ui);
+        let border_width = self.config.ui.border_width;
+        let dialog_positions: Vec<(WindowId, i32, i32)> = self
+            .windows
+            .iter()
+            .filter_map(|(&id, window)| {
+                let w = window.borrow();
+                if !w.position_undefined || w.width <= 0 || w.height <= 0 {
+                    return None;
+                }
+                let parent = self.windows.get(&w.parent?)?.borrow();
+                if parent.position_undefined || parent.width <= 0 || parent.height <= 0 {
+                    return None;
+                }
+                let mut cx = parent.x + (parent.width - w.width) / 2;
+                let mut cy = parent.y + (parent.height - w.height) / 2;
+                if let Some(output) = w
+                    .output
+                    .as_ref()
+                    .and_then(|o| o.upgrade())
+                    .or_else(|| parent.output.as_ref().and_then(|o| o.upgrade()))
+                {
+                    let (ax, ay, aw, ah) = output.borrow().usable_area();
+                    if aw > 0 && ah > 0 {
+                        let min_x = ax + border_width;
+                        let min_y = ay + border_width + titlebar_h;
+                        let max_x = (ax + aw - border_width - w.width).max(min_x);
+                        let max_y = (ay + ah - border_width - w.height).max(min_y);
+                        cx = cx.clamp(min_x, max_x);
+                        cy = cy.clamp(min_y, max_y);
+                    }
+                }
+                Some((id, cx, cy))
+            })
+            .collect();
+        for (id, x, y) in dialog_positions {
+            if let Some(window) = self.windows.get(&id) {
+                window.borrow_mut().set_position(x, y);
+            }
+        }
+
         let mut output_windows: HashMap<OutputId, Vec<WindowId>> = HashMap::new();
 
         for (&window_id, window) in &self.windows {
@@ -2400,25 +2566,27 @@ impl Context {
             if let Some(weak) = window_below {
                 if let Some(window) = weak.upgrade() {
                     let w = window.borrow();
-                    let (px, py) = {
-                        let seat_ref = seat.borrow();
-                        (seat_ref.pointer_x, seat_ref.pointer_y)
-                    };
-                    let border_width = self.config.ui.border_width;
-                    let titlebar_height = super::titlebar::titlebar_height(&self.config.ui);
-                    let frame_x = w.x - border_width;
-                    let frame_y = w.y - border_width - titlebar_height;
-                    let frame_width = w.width + border_width * 2;
-                    let frame_height = w.height + border_width * 2 + titlebar_height;
-                    edges = calculate_resize_edges_near_border(
-                        frame_x,
-                        frame_y,
-                        frame_width,
-                        frame_height,
-                        border_width,
-                        px,
-                        py,
-                    );
+                    if w.is_resizable() {
+                        let (px, py) = {
+                            let seat_ref = seat.borrow();
+                            (seat_ref.pointer_x, seat_ref.pointer_y)
+                        };
+                        let border_width = self.config.ui.border_width;
+                        let titlebar_height = super::titlebar::titlebar_height(&self.config.ui);
+                        let frame_x = w.x - border_width;
+                        let frame_y = w.y - border_width - titlebar_height;
+                        let frame_width = w.width + border_width * 2;
+                        let frame_height = w.height + border_width * 2 + titlebar_height;
+                        edges = calculate_resize_edges_near_border(
+                            frame_x,
+                            frame_y,
+                            frame_width,
+                            frame_height,
+                            border_width,
+                            px,
+                            py,
+                        );
+                    }
                 }
             }
         }

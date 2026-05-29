@@ -5,7 +5,7 @@
 use super::titlebar::TitlebarButton;
 use super::WindowShadow;
 use crate::config::WindowDecoration;
-use crate::protocol::river_window_management_v1::client::river_window_v1::Edges;
+use crate::protocol::river_window_management_v1::client::river_window_v1::{Capabilities, Edges};
 use crate::protocol::{RiverNodeV1, RiverOutputV1, RiverWindowV1};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -128,6 +128,10 @@ pub struct Window {
     pub min_width: i32,
     /// Minimum height
     pub min_height: i32,
+    /// Maximum width hint (0 = no preference)
+    pub max_width: i32,
+    /// Maximum height hint (0 = no preference)
+    pub max_height: i32,
 
     /// Fullscreen state
     pub fullscreen: FullscreenState,
@@ -199,6 +203,8 @@ impl Window {
             height: 0,
             min_width: 0,
             min_height: 0,
+            max_width: 0,
+            max_height: 0,
             fullscreen: FullscreenState::None,
             maximized: false,
             pre_fullscreen: None,
@@ -222,6 +228,49 @@ impl Window {
             needs_configure: true,
             proposed_width: 0,
             proposed_height: 0,
+        }
+    }
+
+    /// True when the window is a dialog-like child of another window. We use
+    /// the parent relationship as the only available signal, since the River
+    /// window-management protocol does not surface xdg-dialog-v1's modal flag.
+    pub fn is_dialog(&self) -> bool {
+        self.parent.is_some()
+    }
+
+    /// True when the client pinned the window to a fixed size: min == max on
+    /// both axes, both nonzero. This is the canonical Wayland signal for a
+    /// non-resizable toplevel.
+    pub fn is_fixed_size(&self) -> bool {
+        self.min_width > 0
+            && self.max_width == self.min_width
+            && self.min_height > 0
+            && self.max_height == self.min_height
+    }
+
+    /// Whether the user may resize this window by dragging its borders.
+    pub fn is_resizable(&self) -> bool {
+        !self.is_dialog() && !self.is_fixed_size()
+    }
+
+    /// Whether the SSD titlebar should expose a minimize button.
+    pub fn has_minimize_button(&self) -> bool {
+        !self.is_dialog()
+    }
+
+    /// Whether the SSD titlebar should expose a maximize button.
+    pub fn has_maximize_button(&self) -> bool {
+        !self.is_dialog() && !self.is_fixed_size()
+    }
+
+    /// The frame style to render for this window's SSD decoration.
+    pub fn frame_style(&self) -> super::titlebar::FrameStyle {
+        if self.is_dialog() {
+            super::titlebar::FrameStyle::Dialog
+        } else if self.is_fixed_size() {
+            super::titlebar::FrameStyle::FixedSize
+        } else {
+            super::titlebar::FrameStyle::Normal
         }
     }
 
@@ -402,6 +451,14 @@ impl Window {
                 WindowDecoration::Csd => rwm_window.use_csd(),
                 WindowDecoration::Ssd => rwm_window.use_ssd(),
             }
+        }
+    }
+
+    /// Inform the client which window-management capabilities are supported.
+    /// Only callable inside a manage sequence.
+    pub fn set_capabilities(&self, caps: Capabilities) {
+        if let Some(ref rwm_window) = self.rwm_window {
+            rwm_window.set_capabilities(caps);
         }
     }
 
