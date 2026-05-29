@@ -1114,6 +1114,17 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
             Event::RenderStart => {
                 state.context.borrow_mut().handle_render_start();
 
+                #[cfg(feature = "debug-logging")]
+                let render_t0 = Instant::now();
+                #[cfg(feature = "debug-logging")]
+                let mut titlebars_rendered = 0u32;
+                #[cfg(feature = "debug-logging")]
+                let mut shadows_rendered = 0u32;
+                #[cfg(feature = "debug-logging")]
+                let mut shadow_render_us = 0u128;
+                #[cfg(feature = "debug-logging")]
+                let mut titlebar_render_us = 0u128;
+
                 // Update shadows and titlebars
                 if let Some(ref shm) = state.globals.shm {
                     let context = state.context.borrow();
@@ -1136,12 +1147,23 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                         let is_fullscreen =
                             !matches!(w.fullscreen, canoe::window::FullscreenState::None);
                         let is_focused = focused_window == Some(w.id);
-                        let shadow_size = if !ui.shadows_enabled || is_fullscreen || w.maximized {
+                        let shadows_on = ui.shadows_enabled && !is_fullscreen && !w.maximized;
+                        let shadow_size = if !shadows_on {
                             0
                         } else if is_focused {
                             ui.shadows_active_size.max(0)
                         } else {
                             ui.shadows_inactive_size.max(0)
+                        };
+                        // Size the buffer for the larger of the active/inactive
+                        // sizes so it stays constant across focus changes (no
+                        // realloc); a smaller band is drawn into it when inactive.
+                        let buffer_shadow_size = if !shadows_on {
+                            0
+                        } else {
+                            ui.shadows_active_size
+                                .max(0)
+                                .max(ui.shadows_inactive_size.max(0))
                         };
                         let shadow_color = ui.shadows_color;
                         let use_ssd = w.decoration != Some(crate::config::WindowDecoration::Csd);
@@ -1193,7 +1215,7 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                             shadow.ensure_buffer(
                                 frame_width,
                                 frame_height,
-                                shadow_size,
+                                buffer_shadow_size,
                                 shm,
                                 qh,
                                 scale,
@@ -1201,6 +1223,8 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                             if let Some(ref compositor) = state.globals.compositor {
                                 shadow.update_input_region(compositor, qh);
                             }
+                            #[cfg(feature = "debug-logging")]
+                            let sh_t0 = Instant::now();
                             let did_render = shadow.render(
                                 frame_width,
                                 shadow_frame_height,
@@ -1208,22 +1232,34 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                                 shadow_color,
                                 scale,
                             );
+                            #[cfg(feature = "debug-logging")]
+                            {
+                                shadow_render_us += sh_t0.elapsed().as_micros();
+                            }
+                            // The rect sits `buffer_shadow_size` in from the
+                            // buffer edges, so position the surface by that inset
+                            // (constant across focus). The drop-shadow shift still
+                            // tracks the actual band size.
                             let offset_x = if use_ssd {
-                                -border_width - shadow_size
+                                -border_width - buffer_shadow_size
                             } else {
-                                -shadow_size
+                                -buffer_shadow_size
                             };
                             let shadow_shift = shadow_size / 2;
                             let offset_y = if use_ssd {
-                                -border_width - titlebar_height + swallow_top - shadow_size
+                                -border_width - titlebar_height + swallow_top - buffer_shadow_size
                                     + shadow_shift
                             } else {
-                                -shadow_size + shadow_shift
+                                -buffer_shadow_size + shadow_shift
                             };
                             shadow.set_offset(offset_x, offset_y);
                             if did_render && shadow.buffer.is_some() {
                                 shadow.sync_next_commit();
                                 shadow.commit();
+                                #[cfg(feature = "debug-logging")]
+                                {
+                                    shadows_rendered += 1;
+                                }
                             }
                         }
                     }
@@ -1297,6 +1333,8 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                                 }
 
                                 // Render titlebar content
+                                #[cfg(feature = "debug-logging")]
+                                let tb_t0 = Instant::now();
                                 let did_render = titlebar.render(
                                     title.as_deref(),
                                     is_focused,
@@ -1308,6 +1346,10 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                                     titlebar_left_down,
                                     ui,
                                 );
+                                #[cfg(feature = "debug-logging")]
+                                {
+                                    titlebar_render_us += tb_t0.elapsed().as_micros();
+                                }
 
                                 // Position decoration so it sits above content with borders
                                 let border_width = canoe::titlebar::border_width(ui, frame_style);
@@ -1321,10 +1363,26 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                                 if did_render && titlebar.buffer.is_some() {
                                     titlebar.sync_next_commit();
                                     titlebar.commit();
+                                    #[cfg(feature = "debug-logging")]
+                                    {
+                                        titlebars_rendered += 1;
+                                    }
                                 }
                             }
                         }
                     }
+                }
+
+                #[cfg(feature = "debug-logging")]
+                if titlebars_rendered > 0 || shadows_rendered > 0 {
+                    eprintln!(
+                        "[canoe render] RenderStart: {} titlebar(s) [{:.1}ms] + {} shadow(s) [{:.1}ms] in {:?}",
+                        titlebars_rendered,
+                        titlebar_render_us as f64 / 1000.0,
+                        shadows_rendered,
+                        shadow_render_us as f64 / 1000.0,
+                        render_t0.elapsed(),
+                    );
                 }
 
                 state.context.borrow().finish_render();
