@@ -72,8 +72,8 @@ cargo build --release
 
 Canoe reads `~/.config/canoe/canoe.toml`. After editing it, send `SIGHUP` to
 re-read it without restarting (e.g. `pkill -HUP canoe`); this refreshes the
-theme, desktop, and window rules. Pass `--no-config` to ignore the file and use
-the built-in defaults (reloads keep honoring this).
+theme, desktop, window rules, and key bindings. Pass `--no-config` to ignore the
+file and use the built-in defaults (reloads keep honoring this).
 
 The main modifier defaults to `super`, but you can change it:
 
@@ -104,6 +104,36 @@ lock_cmd = "swaylock"
 # Or with arguments:
 lock_cmd = ["swaylock", "-f", "-c", "000000"]
 ```
+
+### Hotkeys
+
+Bind arbitrary key chords to commands under the `[hotkeys]` table. Each key is a
+`+`-separated chord (modifiers first, the key last); each value is the command to
+spawn, given as a string that is split on whitespace into program + arguments:
+
+```toml
+[hotkeys]
+"Super+I"       = "control-panel"
+"Super+P"       = "control-panel -m display"
+"Super+Shift+T" = "foot"
+```
+
+If an argument itself contains spaces, use the array form instead, which is
+taken verbatim as the argv (no splitting):
+
+```toml
+"Super+E" = ["sh", "-c", "notify-send 'hi there' && foot"]
+```
+
+Recognized modifiers are `super` (aliases `logo`/`win`/`mod4`), `alt` (`mod1`),
+`ctrl`/`control`, `shift`, `mod3`, and `mod5`. Keys are named by their XKB keysym
+(`i`, `Return`, `space`, `F5`, `XF86AudioRaiseVolume`, …), matched
+case-insensitively — so `Super+I` triggers on the physical `I` key; add `Shift`
+explicitly if you mean the shifted chord. A hotkey naming the same chord as a
+built-in shortcut overrides it.
+
+Edits to `[hotkeys]` (and `main_modifier`) take effect on the next `SIGHUP`
+reload — no restart needed; canoe rebinds every seat's shortcuts.
 
 ### UI Settings
 

@@ -362,6 +362,54 @@ fn request_manage_dirty(state: &AppState) {
     }
 }
 
+/// Rebuild every seat's XKB key bindings from the freshly reloaded config.
+///
+/// Called from the `ManageStart` handler after a SIGHUP reload (see
+/// [`canoe::Context::reload_config`]): the old `river_xkb_binding_v1` objects are
+/// destroyed and recreated from the new binding list so that `[hotkeys]` and
+/// `main_modifier` edits take effect. Must run inside a manage sequence because
+/// `enable` is only valid there.
+fn reregister_xkb_bindings(state: &AppState, qh: &QueueHandle<AppState>) {
+    use river_window_management_v1::client::river_seat_v1::Modifiers;
+
+    let context = state.context.borrow();
+    let Some(xkb_bindings_global) = context.rwm_xkb_bindings.clone() else {
+        return;
+    };
+
+    for (&seat_id, seat_rc) in &context.seats {
+        let mut seat = seat_rc.borrow_mut();
+        let Some(rwm_seat) = seat.rwm_seat.clone() else {
+            continue;
+        };
+
+        // Tear down the existing protocol binding objects.
+        for (_, slot) in seat.xkb_bindings.iter_mut() {
+            if let Some(rwm_binding) = slot.take() {
+                rwm_binding.destroy();
+            }
+        }
+
+        // Rebuild the in-memory list from the new config, then recreate the
+        // protocol objects, enabling those that apply to the seat's current mode.
+        context.rebuild_xkb_bindings(&mut seat);
+        for (idx, (binding, slot)) in seat.xkb_bindings.iter_mut().enumerate() {
+            let mods = Modifiers::from_bits_truncate(binding.modifiers);
+            let rwm_binding = xkb_bindings_global.get_xkb_binding(
+                &rwm_seat,
+                binding.keysym,
+                mods,
+                qh,
+                (seat_id, idx),
+            );
+            if binding.enabled {
+                rwm_binding.enable();
+            }
+            *slot = Some(rwm_binding);
+        }
+    }
+}
+
 fn update_menu_hover_from_global(
     state: &mut AppState,
     seat_id: canoe::SeatId,
@@ -847,7 +895,16 @@ fn render_desktop_surface(
         return;
     };
 
-    let (bg_color, icons, icon_theme, font_name, font_size, label_font_name, label_font_size, scale) = {
+    let (
+        bg_color,
+        icons,
+        icon_theme,
+        font_name,
+        font_size,
+        label_font_name,
+        label_font_size,
+        scale,
+    ) = {
         let mut context = state.context.borrow_mut();
         let ui = &context.config.ui;
         let bg_color = ui.desktop_background;
@@ -1080,6 +1137,11 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
             }
             Event::ManageStart => {
                 state.context.borrow_mut().handle_manage_start();
+                // After a config reload, rebuild key bindings within this manage
+                // sequence (enable/disable are only valid here).
+                if state.context.borrow_mut().take_pending_rebind_xkb() {
+                    reregister_xkb_bindings(state, qh);
+                }
                 // If in icon focus mode, validate that the selected icon still exists
                 {
                     let mut context = state.context.borrow_mut();
@@ -1290,8 +1352,8 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                     for (&window_id, window) in &context.windows {
                         let mut w = window.borrow_mut();
 
-                        let hide_titlebar = w.hidden
-                            || w.decoration == Some(crate::config::WindowDecoration::Csd);
+                        let hide_titlebar =
+                            w.hidden || w.decoration == Some(crate::config::WindowDecoration::Csd);
                         if hide_titlebar {
                             if let Some(ref mut titlebar) = w.titlebar {
                                 if titlebar.mapped {
@@ -2778,7 +2840,8 @@ impl Dispatch<wl_pointer::WlPointer, canoe::SeatId> for AppState {
                                                 // selected this icon via enter_icon_focus.
                                                 let mut seat_mut = seat.borrow_mut();
                                                 seat_mut.last_icon_click = None;
-                                                seat_mut.queue_action(binding::Action::IconActivate);
+                                                seat_mut
+                                                    .queue_action(binding::Action::IconActivate);
                                                 drop(seat_mut);
                                                 request_manage_dirty(state);
                                             } else {
@@ -2821,8 +2884,7 @@ impl Dispatch<wl_pointer::WlPointer, canoe::SeatId> for AppState {
                                             render_desktop_surface(state, output_id, _qh);
                                             {
                                                 let mut seat_mut = seat.borrow_mut();
-                                                seat_mut
-                                                    .queue_action(binding::Action::ClearFocus);
+                                                seat_mut.queue_action(binding::Action::ClearFocus);
                                                 seat_mut.queue_action(
                                                     binding::Action::SwitchMode {
                                                         mode: crate::config::Mode::Default,
@@ -2875,7 +2937,8 @@ impl Dispatch<wl_pointer::WlPointer, canoe::SeatId> for AppState {
                                             );
                                             update_menu_hover_from_global(state, *seat_id, _qh);
                                             seat.borrow_mut().menu_click_button = Some(button);
-                                            seat.borrow_mut().queue_action(binding::Action::ClearFocus);
+                                            seat.borrow_mut()
+                                                .queue_action(binding::Action::ClearFocus);
                                             request_manage_dirty(state);
                                         }
                                     } else {

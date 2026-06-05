@@ -211,6 +211,18 @@ pub struct Config {
     pub ui: UiConfig,
 
     pub rules: Vec<Rule>,
+    pub hotkeys: Vec<Hotkey>,
+}
+
+/// A user-configured global hotkey: a key chord that spawns a command.
+#[derive(Debug, Clone)]
+pub struct Hotkey {
+    /// XKB keysym of the (unshifted) key.
+    pub keysym: u32,
+    /// Required modifier mask (see [`modifiers`]).
+    pub modifiers: u32,
+    /// Command to spawn, as an argv vector (first element is the program).
+    pub argv: Vec<String>,
 }
 
 impl Default for Config {
@@ -234,6 +246,7 @@ impl Default for Config {
             ui: UiConfig::default(),
 
             rules: default_rules(),
+            hotkeys: Vec::new(),
         }
     }
 }
@@ -246,6 +259,8 @@ struct FileConfig {
     lock_cmd: Option<StringOrVec>,
     ui: Option<UiConfigFile>,
     rules: Option<Vec<RuleFile>>,
+    /// Map of key chord (e.g. `"Super+I"`) to the command it spawns.
+    hotkeys: Option<HashMap<String, StringOrVec>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -543,6 +558,83 @@ fn clean_cmd_args(values: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+/// Parse a single modifier token (case-insensitive) into its mask bit.
+fn parse_modifier(token: &str) -> Option<u32> {
+    use modifiers::*;
+    match token.trim().to_ascii_lowercase().as_str() {
+        "shift" => Some(SHIFT),
+        "ctrl" | "control" => Some(CTRL),
+        "alt" | "mod1" => Some(ALT),
+        "super" | "logo" | "win" | "mod4" => Some(SUPER),
+        "mod3" => Some(MOD3),
+        "mod5" => Some(MOD5),
+        _ => None,
+    }
+}
+
+/// Parse a key token into an XKB keysym.
+///
+/// The lookup is case-insensitive, so a letter like `I` resolves to the
+/// unshifted `i` keysym. That matches how the built-in bindings are expressed
+/// (a base keysym plus an explicit `Shift` in the modifier mask) and lets a
+/// chord fire off the physical key regardless of Shift state.
+fn parse_keysym(token: &str) -> Option<u32> {
+    use xkbcommon::xkb;
+    let raw = xkb::keysym_from_name(token.trim(), xkb::KEYSYM_CASE_INSENSITIVE).raw();
+    if raw == xkb::keysyms::KEY_NoSymbol {
+        None
+    } else {
+        Some(raw)
+    }
+}
+
+/// Parse a chord string such as `"Super+Shift+I"` into `(modifiers, keysym)`.
+///
+/// The final `+`-separated token is the key; every token before it is a
+/// modifier. Returns `None` if any token is unrecognized or the key is missing.
+fn parse_chord(chord: &str) -> Option<(u32, u32)> {
+    let tokens: Vec<&str> = chord.split('+').map(str::trim).collect();
+    let (key, mods) = tokens.split_last()?;
+    if key.is_empty() {
+        return None;
+    }
+    let mut modifiers = 0u32;
+    for m in mods {
+        modifiers |= parse_modifier(m)?;
+    }
+    Some((modifiers, parse_keysym(key)?))
+}
+
+/// Build the hotkey list from the `[hotkeys]` config table, skipping (with a
+/// warning) any entry whose chord can't be parsed or whose command is empty.
+///
+/// A string command is split on whitespace into an argv (so
+/// `"control-panel -m display"` runs three arguments); the array form is the
+/// explicit alternative for arguments that themselves contain spaces.
+fn hotkeys_from_file(hotkeys: HashMap<String, StringOrVec>) -> Vec<Hotkey> {
+    let mut parsed = Vec::new();
+    for (chord, cmd) in hotkeys {
+        let Some((modifiers, keysym)) = parse_chord(&chord) else {
+            eprintln!("canoe: ignoring hotkey with unparsable chord {chord:?}");
+            continue;
+        };
+        let argv = match cmd {
+            StringOrVec::String(cmd) => cmd.split_whitespace().map(String::from).collect(),
+            StringOrVec::Vec(args) => clean_cmd_args(args),
+        };
+        if argv.is_empty() {
+            eprintln!("canoe: ignoring hotkey {chord:?} with empty command");
+            continue;
+        }
+        parsed.push(Hotkey {
+            keysym,
+            modifiers,
+            argv,
+        });
+    }
+    parsed
+}
+
 fn compile_regex(value: Option<String>) -> Option<Regex> {
     let pattern = value?;
 
@@ -613,6 +705,9 @@ pub fn load_config(skip_config: bool) -> Config {
                 }
                 if let Some(rules) = file_config.rules {
                     config.rules = rules_from_file(rules);
+                }
+                if let Some(hotkeys) = file_config.hotkeys {
+                    config.hotkeys = hotkeys_from_file(hotkeys);
                 }
             }
         }
@@ -751,6 +846,68 @@ mod tests {
 
         assert_eq!(ui.shadows_active_size, 0);
         assert_eq!(ui.shadows_inactive_size, 0);
+    }
+
+    #[test]
+    fn test_chord_parsing() {
+        use modifiers::*;
+        // Single-letter keys normalize to the unshifted keysym; modifiers OR together.
+        assert_eq!(parse_chord("Super+I"), Some((SUPER, 0x69))); // 'i'
+        assert_eq!(parse_chord("Super+A"), Some((SUPER, 0x61))); // 'a'
+        assert_eq!(parse_chord("Super+Shift+T"), Some((SUPER | SHIFT, 0x74))); // 't'
+                                                                               // Named keys and modifier aliases resolve too.
+        assert_eq!(parse_chord("Super+Return"), Some((SUPER, 0xFF0D)));
+        assert_eq!(parse_chord("Ctrl+Alt+space"), Some((CTRL | ALT, 0x20)));
+        assert_eq!(parse_chord("mod4+i"), Some((SUPER, 0x69)));
+        // Unknown modifier, unknown key, and missing key are all rejected.
+        assert!(parse_chord("Hyper+x").is_none());
+        assert!(parse_chord("Super+NotAKey").is_none());
+        assert!(parse_chord("Super+").is_none());
+    }
+
+    #[test]
+    fn test_hotkey_parsing() {
+        use modifiers::*;
+        let contents = r#"
+            [hotkeys]
+            "Super+I" = "control-panel"
+            "Super+D" = "control-panel -m display"
+            "Super+P" = ["control-panel", "-m", "display"]
+            "Super+Shift+T" = "foot"
+            "Super+Bogus++" = "nope"
+        "#;
+
+        let file_config = toml::from_str::<FileConfig>(contents).expect("parse config");
+        let hotkeys = hotkeys_from_file(file_config.hotkeys.expect("hotkeys present"));
+
+        // The malformed "Super+Bogus++" entry is dropped; four valid ones remain.
+        assert_eq!(hotkeys.len(), 4);
+
+        let argv_of = |keysym: u32| -> Vec<String> {
+            hotkeys
+                .iter()
+                .find(|h| h.keysym == keysym)
+                .unwrap_or_else(|| panic!("hotkey for keysym {keysym:#x} bound"))
+                .argv
+                .clone()
+        };
+        let display_argv = vec![
+            "control-panel".to_string(),
+            "-m".to_string(),
+            "display".to_string(),
+        ];
+
+        // A bare string is a single-element argv; a string with args splits on
+        // whitespace, producing the same argv as the explicit array form.
+        assert_eq!(argv_of(0x69), vec!["control-panel".to_string()]); // Super+I
+        assert_eq!(argv_of(0x64), display_argv); // Super+D, string split
+        assert_eq!(argv_of(0x70), display_argv); // Super+P, array form
+        assert_eq!(argv_of(0x74), vec!["foot".to_string()]); // Super+Shift+T
+
+        let cp = hotkeys.iter().find(|h| h.keysym == 0x69).unwrap();
+        assert_eq!(cp.modifiers, SUPER);
+        let term = hotkeys.iter().find(|h| h.keysym == 0x74).unwrap();
+        assert_eq!(term.modifiers, SUPER | SHIFT);
     }
 
     #[test]

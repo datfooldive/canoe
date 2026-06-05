@@ -57,6 +57,12 @@ pub struct Context {
     /// only valid inside a manage sequence, so the actual work is deferred there
     /// rather than run directly in the SIGHUP handler.
     pending_reapply_rules: bool,
+    /// Set by [`Context::reload_config`] to rebuild and re-register each seat's
+    /// XKB key bindings on the next `manage_start`. Like rule re-application this
+    /// is deferred because `river_xkb_binding_v1.enable`/`disable` are only valid
+    /// inside a manage sequence, and recreating the binding objects also needs
+    /// the Wayland queue handle that only the dispatch layer has.
+    pending_rebind_xkb: bool,
 
     // Runtime state
     pub running: bool,
@@ -109,6 +115,7 @@ impl Context {
             config: load_config(skip_config),
             skip_config,
             pending_reapply_rules: false,
+            pending_rebind_xkb: false,
 
             running: true,
             session_locked: false,
@@ -156,9 +163,12 @@ impl Context {
         }
         self.mark_all_desktops_dirty();
 
-        // Re-applying rules sends window-management requests, which may only be
-        // made during a manage sequence; defer to the next manage_start.
+        // Re-applying rules and re-registering key bindings both send requests
+        // that may only be made during a manage sequence; defer both to the next
+        // manage_start. Rebinding every reload also lets `main_modifier` changes
+        // take effect, not just `[hotkeys]` edits.
         self.pending_reapply_rules = true;
+        self.pending_rebind_xkb = true;
         if let Some(ref rwm) = self.rwm {
             rwm.manage_dirty();
         }
@@ -263,16 +273,9 @@ impl Context {
 
     /// Set up bindings for a seat
     fn setup_seat_bindings(&self, seat: &mut Seat) {
-        use crate::binding::action::{default_pointer_bindings, default_xkb_bindings};
+        use crate::binding::action::default_pointer_bindings;
 
-        // Add XKB bindings
-        for (mode, keysym, modifiers, action, event) in
-            default_xkb_bindings(self.config.main_modifier)
-        {
-            seat.add_xkb_binding(
-                XkbBinding::new(mode, keysym, modifiers, action).with_event(event),
-            );
-        }
+        self.populate_xkb_bindings(seat);
 
         // Add pointer bindings
         for (mode, button, modifiers, action) in default_pointer_bindings(self.config.main_modifier)
@@ -281,6 +284,76 @@ impl Context {
         }
 
         seat.initialize_bindings();
+    }
+
+    /// Append the built-in XKB bindings plus any user-configured `[hotkeys]` to a
+    /// seat. Existing bindings are left in place, so callers rebuilding the list
+    /// (see [`Context::rebuild_xkb_bindings`]) must clear it first.
+    fn populate_xkb_bindings(&self, seat: &mut Seat) {
+        use crate::binding::action::default_xkb_bindings;
+        use crate::binding::BindingEvent;
+        use crate::config::Mode;
+
+        // User-configured hotkeys fire in the default mode on key press and take
+        // precedence over any built-in binding sharing the same key + modifiers,
+        // so collect their signatures and skip the colliding defaults rather than
+        // registering two bindings for one chord.
+        let user_chords: std::collections::HashSet<(u32, u32)> = self
+            .config
+            .hotkeys
+            .iter()
+            .map(|hotkey| (hotkey.keysym, hotkey.modifiers))
+            .collect();
+
+        for (mode, keysym, modifiers, action, event) in
+            default_xkb_bindings(self.config.main_modifier)
+        {
+            if mode == Mode::Default
+                && event == BindingEvent::Pressed
+                && user_chords.contains(&(keysym, modifiers))
+            {
+                continue;
+            }
+            seat.add_xkb_binding(
+                XkbBinding::new(mode, keysym, modifiers, action).with_event(event),
+            );
+        }
+
+        // Add user-configured hotkeys (spawn a command on key press)
+        for hotkey in &self.config.hotkeys {
+            seat.add_xkb_binding(
+                XkbBinding::new(
+                    Mode::Default,
+                    hotkey.keysym,
+                    hotkey.modifiers,
+                    Action::Spawn {
+                        argv: hotkey.argv.clone(),
+                    },
+                )
+                .with_event(BindingEvent::Pressed),
+            );
+        }
+    }
+
+    /// Rebuild a seat's in-memory XKB binding list from the current config and
+    /// mark each enabled for the seat's current mode.
+    ///
+    /// This only refreshes the data; the caller must destroy the old protocol
+    /// binding objects beforehand and create new ones afterward (that needs the
+    /// Wayland queue handle, which lives in the dispatch layer). Pointer bindings
+    /// are left untouched.
+    pub fn rebuild_xkb_bindings(&self, seat: &mut Seat) {
+        seat.xkb_bindings.clear();
+        self.populate_xkb_bindings(seat);
+        let mode = seat.mode;
+        for (binding, _) in &mut seat.xkb_bindings {
+            binding.enabled = binding.mode == mode;
+        }
+    }
+
+    /// Take (and clear) the pending-XKB-rebind flag set by a config reload.
+    pub fn take_pending_rebind_xkb(&mut self) -> bool {
+        std::mem::take(&mut self.pending_rebind_xkb)
     }
 
     /// Remove a seat from context
@@ -1822,9 +1895,9 @@ impl Context {
                 let target = output
                     .and_then(|o| o.upgrade())
                     .or_else(|| {
-                        self.windows.get(&window_id).and_then(|w| {
-                            w.borrow().output.as_ref().and_then(|o| o.upgrade())
-                        })
+                        self.windows
+                            .get(&window_id)
+                            .and_then(|w| w.borrow().output.as_ref().and_then(|o| o.upgrade()))
                     })
                     .or_else(|| {
                         self.current_output
@@ -1982,14 +2055,17 @@ impl Context {
         let mut chains: Vec<(WindowId, WindowId, usize)> = self
             .windows
             .iter()
-            .filter_map(|(&id, w)| w.borrow().parent.map(|p| (id, p, self.parent_chain_depth(id))))
+            .filter_map(|(&id, w)| {
+                w.borrow()
+                    .parent
+                    .map(|p| (id, p, self.parent_chain_depth(id)))
+            })
             .collect();
         chains.sort_by_key(|&(_, _, depth)| depth);
         for (child_id, parent_id, _) in chains {
-            let (Some(child), Some(parent)) = (
-                self.windows.get(&child_id),
-                self.windows.get(&parent_id),
-            ) else {
+            let (Some(child), Some(parent)) =
+                (self.windows.get(&child_id), self.windows.get(&parent_id))
+            else {
                 continue;
             };
             let c = child.borrow();
