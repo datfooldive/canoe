@@ -12,6 +12,9 @@ use super::DesktopSurface;
 /// Output identifier
 pub type OutputId = usize;
 
+/// Default workspace
+pub const DEFAULT_WORKSPACE: u32 = 1;
+
 /// A managed output (display)
 pub struct Output {
     /// Unique output ID
@@ -51,6 +54,9 @@ pub struct Output {
     /// Desktop background surface for pointer input
     pub desktop_surface: Option<DesktopSurface>,
 
+    /// Active workspace
+    pub active_workspace: u32,
+
     /// Whether this output has been removed
     pub removed: bool,
 }
@@ -76,6 +82,7 @@ impl Output {
             exclusive_width: 0,
             exclusive_height: 0,
             desktop_surface: None,
+            active_workspace: DEFAULT_WORKSPACE,
             removed: false,
         }
     }

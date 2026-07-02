@@ -105,6 +105,8 @@ pub struct Window {
 
     /// Associated output
     pub output: Option<Weak<RefCell<super::Output>>>,
+    /// Workspace
+    pub workspace: u32,
     /// Process ID
     pub pid: i32,
     /// Application ID
@@ -149,6 +151,8 @@ pub struct Window {
     pub floating: bool,
     /// Hidden state
     pub hidden: bool,
+    /// Rendered visibility
+    pub rendered_visible: bool,
     /// Sequence number assigned when minimized (for ordering icons)
     pub minimize_seq: u64,
     /// Clip state
@@ -192,6 +196,7 @@ impl Window {
             rwm_window: None,
             rwm_node: None,
             output: None,
+            workspace: super::output::DEFAULT_WORKSPACE,
             pid: 0,
             app_id: None,
             title: None,
@@ -213,6 +218,7 @@ impl Window {
             pending_unfullscreen_restore: false,
             floating: false,
             hidden: false,
+            rendered_visible: true,
             minimize_seq: 0,
             clip_state: ClipState::Unknown,
             decoration: None,
@@ -277,6 +283,10 @@ impl Window {
     /// Check if window is visible on the given output
     pub fn is_visible_on(&self, output: &super::Output) -> bool {
         if self.hidden {
+            return false;
+        }
+
+        if self.workspace != output.active_workspace {
             return false;
         }
 
@@ -372,21 +382,29 @@ impl Window {
 
     /// Hide the window
     pub fn hide(&mut self) {
-        if !self.hidden {
-            self.hidden = true;
-            if let Some(ref rwm_window) = self.rwm_window {
-                rwm_window.hide();
-            }
-        }
+        self.hidden = true;
     }
 
     /// Show the window
     pub fn show(&mut self) {
-        if self.hidden {
-            self.hidden = false;
-            if let Some(ref rwm_window) = self.rwm_window {
+        self.hidden = false;
+    }
+
+    /// Set rendered visibility
+    pub fn set_rendered_visible(&mut self, visible: bool) {
+        if self.rendered_visible == visible {
+            return;
+        }
+
+        self.rendered_visible = visible;
+        if let Some(ref rwm_window) = self.rwm_window {
+            if visible {
                 rwm_window.show();
+            } else {
+                rwm_window.hide();
             }
+        }
+        if visible {
             // Force the titlebar to re-render + commit on the next render
             // sequence. Without a fresh commit the decoration surface stays
             // unmapped after rwm_window.show() and no wl_pointer.Enter
@@ -644,8 +662,10 @@ impl std::fmt::Debug for Window {
             .field("y", &self.y)
             .field("width", &self.width)
             .field("height", &self.height)
+            .field("workspace", &self.workspace)
             .field("floating", &self.floating)
             .field("hidden", &self.hidden)
+            .field("rendered_visible", &self.rendered_visible)
             .finish()
     }
 }

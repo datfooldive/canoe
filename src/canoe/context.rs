@@ -186,6 +186,7 @@ impl Context {
         let output_id = self.current_output_for_new_window();
         if let Some(output_id) = output_id {
             if let Some(output) = self.outputs.get(&output_id) {
+                window.workspace = output.borrow().active_workspace;
                 window.output = Some(Rc::downgrade(output));
             }
         }
@@ -417,16 +418,20 @@ impl Context {
 
     /// Focus a window
     pub fn focus(&mut self, window_id: WindowId) {
-        // Unfullscreen any fullscreen window when switching to a different window.
-        // We cannot rely on self.focused_window here because focus_preview (used
-        // during alt-tab) may have already changed it.
+        let target_output_id = self.output_for_window_id(window_id);
         let fullscreen_ids: Vec<WindowId> = self
             .windows
             .iter()
             .filter_map(|(&id, w)| {
-                if id != window_id
-                    && !matches!(w.borrow().fullscreen, super::window::FullscreenState::None)
-                {
+                if id == window_id {
+                    return None;
+                }
+                let w = w.borrow();
+                if matches!(w.fullscreen, super::window::FullscreenState::None) {
+                    return None;
+                }
+                let output = self.outputs.get(&target_output_id?)?;
+                if w.is_visible_on(&output.borrow()) {
                     Some(id)
                 } else {
                     None
@@ -574,6 +579,12 @@ impl Context {
             }
             Action::SendToOutput { direction } => {
                 self.send_to_output(direction);
+            }
+            Action::SwitchWorkspace { workspace } => {
+                self.switch_workspace(workspace);
+            }
+            Action::SendToWorkspace { workspace } => {
+                self.send_to_workspace(workspace);
             }
             Action::PointerMove => {
                 self.start_pointer_move(seat_id);
@@ -1099,12 +1110,106 @@ impl Context {
         if let (Some(window), Some(output)) =
             (self.windows.get(&window_id), self.outputs.get(&output_id))
         {
-            window.borrow_mut().output = Some(Rc::downgrade(output));
+            let current_output_id = window
+                .borrow()
+                .output
+                .as_ref()
+                .and_then(|output| output.upgrade())
+                .map(|output| output.borrow().id);
+            let active_workspace = output.borrow().active_workspace;
+            {
+                let mut window = window.borrow_mut();
+                window.output = Some(Rc::downgrade(output));
+                if current_output_id != Some(output_id) {
+                    window.workspace = active_workspace;
+                }
+            }
             if self.focused_window == Some(window_id) {
                 self.current_output = Some(output_id);
                 self.last_focused_output = Some(output_id);
                 self.set_default_layer_shell_output(output_id);
             }
+        }
+    }
+
+    fn switch_workspace(&mut self, workspace: u32) {
+        if workspace == 0 {
+            return;
+        }
+
+        let Some(output_id) = self.current_output.or(self.last_focused_output) else {
+            return;
+        };
+        let Some(output) = self.outputs.get(&output_id) else {
+            return;
+        };
+        if output.borrow().active_workspace == workspace {
+            return;
+        }
+
+        output.borrow_mut().active_workspace = workspace;
+        self.current_output = Some(output_id);
+        self.last_focused_output = Some(output_id);
+        self.set_default_layer_shell_output(output_id);
+        self.mark_all_desktops_dirty();
+        self.focus_top_visible_on_output(output_id);
+        if let Some(ref rwm) = self.rwm {
+            rwm.manage_dirty();
+        }
+    }
+
+    fn send_to_workspace(&mut self, workspace: u32) {
+        if workspace == 0 {
+            return;
+        }
+
+        let Some(window_id) = self.focused_window else {
+            return;
+        };
+        let output_id = self
+            .output_for_window_id(window_id)
+            .or(self.current_output)
+            .or(self.last_focused_output);
+
+        if let Some(window) = self.windows.get(&window_id) {
+            window.borrow_mut().workspace = workspace;
+        }
+        self.mark_all_desktops_dirty();
+
+        if let Some(output_id) = output_id {
+            let active = self
+                .outputs
+                .get(&output_id)
+                .map(|output| output.borrow().active_workspace)
+                == Some(workspace);
+            if !active && self.focused_window == Some(window_id) {
+                self.focus_top_visible_on_output(output_id);
+            }
+        }
+
+        if let Some(ref rwm) = self.rwm {
+            rwm.manage_dirty();
+        }
+    }
+
+    fn focus_top_visible_on_output(&mut self, output_id: OutputId) {
+        let Some(output) = self.outputs.get(&output_id) else {
+            self.clear_keyboard_focus();
+            return;
+        };
+        let output_ref = output.borrow();
+        let next = self.focus_stack.iter().copied().find(|window_id| {
+            self.windows
+                .get(window_id)
+                .map(|window| window.borrow().is_visible_on(&output_ref))
+                .unwrap_or(false)
+        });
+        drop(output_ref);
+
+        if let Some(window_id) = next {
+            self.focus(window_id);
+        } else {
+            self.clear_keyboard_focus();
         }
     }
 
@@ -1122,10 +1227,13 @@ impl Context {
     fn parent_output_if_visible(&self, parent_id: WindowId) -> Option<OutputId> {
         let parent = self.windows.get(&parent_id)?;
         let p = parent.borrow();
-        if p.hidden {
-            return None;
+        let output_id = self.output_for_window_rect(&p)?;
+        let output = self.outputs.get(&output_id)?;
+        if p.is_visible_on(&output.borrow()) {
+            Some(output_id)
+        } else {
+            None
         }
-        self.output_for_window_rect(&p)
     }
 
     fn current_output_for_new_window(&self) -> Option<OutputId> {
@@ -1161,16 +1269,18 @@ impl Context {
                     continue;
                 };
                 let w = window.borrow();
-                if w.hidden {
-                    continue;
-                }
                 let matches_output = w
                     .output
                     .as_ref()
                     .and_then(|output| output.upgrade())
                     .map(|output| output.borrow().id)
                     == Some(output_id);
-                if matches_output {
+                let visible = self
+                    .outputs
+                    .get(&output_id)
+                    .map(|output| w.is_visible_on(&output.borrow()))
+                    .unwrap_or(false);
+                if matches_output && visible {
                     candidate = Some(window_id);
                     break;
                 }
@@ -1182,7 +1292,14 @@ impl Context {
                 let Some(window) = self.windows.get(&window_id) else {
                     continue;
                 };
-                if !window.borrow().hidden {
+                let w = window.borrow();
+                let visible = w
+                    .output
+                    .as_ref()
+                    .and_then(|output| output.upgrade())
+                    .map(|output| w.is_visible_on(&output.borrow()))
+                    .unwrap_or(false);
+                if visible {
                     candidate = Some(window_id);
                     break;
                 }
@@ -1406,6 +1523,9 @@ impl Context {
             w.hide();
         }
         self.mark_all_desktops_dirty();
+        if let Some(ref rwm) = self.rwm {
+            rwm.manage_dirty();
+        }
         if !was_focused {
             return;
         }
@@ -1995,6 +2115,12 @@ impl Context {
         }
     }
 
+    fn is_render_visible(&self, window: &Window) -> bool {
+        self.outputs
+            .values()
+            .any(|output| window.is_visible_on(&output.borrow()))
+    }
+
     /// Handle render_start event - position windows and set borders
     pub fn handle_render_start(&mut self) {
         self.apply_initial_positions();
@@ -2011,13 +2137,7 @@ impl Context {
             let mut w = window.borrow_mut();
 
             // Check if window should be visible
-            let mut visible = self
-                .outputs
-                .values()
-                .any(|output| w.is_visible_on(&output.borrow()));
-            if unminimize_all {
-                visible = true;
-            }
+            let visible = unminimize_all || self.is_render_visible(&w);
 
             let swallow_top = w.swallow_top;
             if swallow_top > 0 && w.width > 0 && w.height > 0 {
@@ -2029,13 +2149,13 @@ impl Context {
             }
 
             if visible {
-                w.show();
+                w.set_rendered_visible(true);
 
                 // Disable compositor borders; custom decoration handles borders.
                 let edges = Edges::all();
                 w.set_borders(edges, 0, 0, 0, 0, 0);
             } else {
-                w.hide();
+                w.set_rendered_visible(false);
             }
         }
 
@@ -2046,7 +2166,7 @@ impl Context {
             let root_id = self.root_ancestor(focused_id);
             if let Some(root) = self.windows.get(&root_id) {
                 let root = root.borrow();
-                if !root.hidden {
+                if root.rendered_visible {
                     root.place_top();
                 }
             }
@@ -2073,7 +2193,7 @@ impl Context {
                 continue;
             };
             let c = child.borrow();
-            if c.hidden {
+            if !c.rendered_visible {
                 continue;
             }
             c.place_above(&parent.borrow());
@@ -2272,30 +2392,37 @@ impl Context {
 
     /// Build menu items for windows (including hidden).
     pub fn collect_menu_items(&self, _output_id: OutputId) -> Vec<MenuItem> {
-        let focused = self.focused_window;
-
-        let mut items = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-
-        for window_id in &self.focus_stack {
-            if let Some(window) = self.windows.get(window_id) {
-                items.push(menu_item_from_window(*window_id, focused, &window.borrow()));
-                seen.insert(*window_id);
-            }
-        }
-
-        for (&window_id, window) in &self.windows {
-            if seen.contains(&window_id) {
-                continue;
-            }
-            items.push(menu_item_from_window(window_id, focused, &window.borrow()));
-        }
-
-        items
+        self.collect_menu_items_matching(|_, _| true)
     }
 
-    /// Build menu items for windows sharing the given app id (including hidden).
-    pub fn collect_menu_items_for_app(&self, _output_id: OutputId, app_id: &str) -> Vec<MenuItem> {
+    /// Build Alt-Tab menu items for the output's current workspace (including hidden).
+    pub fn collect_alt_tab_menu_items(&self, output_id: OutputId) -> Vec<MenuItem> {
+        let Some(output) = self.outputs.get(&output_id) else {
+            return Vec::new();
+        };
+        let output = output.borrow();
+        self.collect_menu_items_matching(|_, window| window_on_output_workspace(window, &output))
+    }
+
+    /// Build Alt-Tab app items for the output's current workspace (including hidden).
+    pub fn collect_alt_tab_menu_items_for_app(
+        &self,
+        output_id: OutputId,
+        app_id: &str,
+    ) -> Vec<MenuItem> {
+        let Some(output) = self.outputs.get(&output_id) else {
+            return Vec::new();
+        };
+        let output = output.borrow();
+        self.collect_menu_items_matching(|_, window| {
+            window.app_id.as_deref() == Some(app_id) && window_on_output_workspace(window, &output)
+        })
+    }
+
+    fn collect_menu_items_matching(
+        &self,
+        keep: impl Fn(WindowId, &Window) -> bool,
+    ) -> Vec<MenuItem> {
         let focused = self.focused_window;
 
         let mut items = Vec::new();
@@ -2304,7 +2431,7 @@ impl Context {
         for window_id in &self.focus_stack {
             if let Some(window) = self.windows.get(window_id) {
                 let w = window.borrow();
-                if w.app_id.as_deref() == Some(app_id) {
+                if keep(*window_id, &w) {
                     items.push(menu_item_from_window(*window_id, focused, &w));
                     seen.insert(*window_id);
                 }
@@ -2316,7 +2443,7 @@ impl Context {
                 continue;
             }
             let w = window.borrow();
-            if w.app_id.as_deref() == Some(app_id) {
+            if keep(window_id, &w) {
                 items.push(menu_item_from_window(window_id, focused, &w));
             }
         }
@@ -2364,6 +2491,9 @@ impl Context {
             .filter_map(|(&window_id, window)| {
                 let w = window.borrow();
                 if !w.hidden {
+                    return None;
+                }
+                if w.workspace != output_ref.active_workspace {
                     return None;
                 }
                 let matches = w
@@ -2433,17 +2563,37 @@ impl Context {
         };
 
         if let Some(window) = self.windows.get(&window_id) {
-            let was_hidden;
-            {
+            let (was_hidden, workspace, output_id) = {
                 let mut w = window.borrow_mut();
-                was_hidden = w.hidden;
+                let was_hidden = w.hidden;
                 if w.hidden {
                     w.show();
                 }
                 w.place_top();
+                let output_id = w
+                    .output
+                    .as_ref()
+                    .and_then(|output| output.upgrade())
+                    .map(|output| output.borrow().id);
+                (was_hidden, w.workspace, output_id)
+            };
+            let mut workspace_changed = false;
+            if let Some(output_id) = output_id {
+                if let Some(output) = self.outputs.get(&output_id) {
+                    let mut output = output.borrow_mut();
+                    workspace_changed = output.active_workspace != workspace;
+                    output.active_workspace = workspace;
+                    drop(output);
+                    self.current_output = Some(output_id);
+                    self.last_focused_output = Some(output_id);
+                    self.set_default_layer_shell_output(output_id);
+                }
             }
-            if was_hidden {
+            if was_hidden || workspace_changed {
                 self.mark_all_desktops_dirty();
+                if let Some(ref rwm) = self.rwm {
+                    rwm.manage_dirty();
+                }
             }
             self.focus(window_id);
         }
@@ -2497,23 +2647,38 @@ impl Context {
             self.restore_stack_order(order);
         }
 
-        if let Some(window) = self.windows.get(&window_id) {
+        let menu_output = self
+            .window_menu
+            .as_ref()
+            .and_then(|menu| self.outputs.get(&menu.output_id));
+        if let (Some(window), Some(output)) = (self.windows.get(&window_id), menu_output) {
             let mut was_hidden = false;
+            let mut previewable = true;
             {
+                let output = output.borrow();
                 let mut w = window.borrow_mut();
-                if w.hidden {
-                    was_hidden = true;
-                    w.show();
-                    visibility_changed = true;
+                if window_on_output_workspace(&w, &output) {
+                    if w.hidden {
+                        was_hidden = true;
+                        w.show();
+                        visibility_changed = true;
+                    }
+                    w.place_top();
+                } else {
+                    previewable = false;
                 }
-                w.place_top();
             }
-            self.focus_preview_visual(window_id);
-            self.window_menu_alt_tab_preview = Some(window_id);
-            self.window_menu_alt_tab_preview_was_hidden = was_hidden;
+            if previewable {
+                self.focus_preview_visual(window_id);
+                self.window_menu_alt_tab_preview = Some(window_id);
+                self.window_menu_alt_tab_preview_was_hidden = was_hidden;
+            }
         }
         if visibility_changed {
             self.mark_all_desktops_dirty();
+            if let Some(ref rwm) = self.rwm {
+                rwm.manage_dirty();
+            }
         }
     }
 
@@ -2542,6 +2707,9 @@ impl Context {
         self.clear_alt_tab_state();
         if visibility_changed {
             self.mark_all_desktops_dirty();
+            if let Some(ref rwm) = self.rwm {
+                rwm.manage_dirty();
+            }
         }
     }
 
@@ -2666,6 +2834,9 @@ impl Context {
             }
         }
         self.mark_all_desktops_dirty();
+        if let Some(ref rwm) = self.rwm {
+            rwm.manage_dirty();
+        }
         self.exit_icon_focus(seat_id);
         self.focus(window_id);
     }
@@ -2907,6 +3078,19 @@ fn point_in_titlebar(x: i32, y: i32, width: i32, titlebar_height: i32, px: i32, 
     }
 
     px >= x && px <= x + width && py >= y - titlebar_height && py <= y
+}
+
+fn window_on_output_workspace(window: &Window, output: &Output) -> bool {
+    if window.workspace != output.active_workspace {
+        return false;
+    }
+
+    window
+        .output
+        .as_ref()
+        .and_then(|output| output.upgrade())
+        .map(|window_output| window_output.borrow().id == output.id)
+        .unwrap_or(false)
 }
 
 fn menu_item_from_window(

@@ -281,7 +281,11 @@ fn open_window_menu(
 ) {
     let items = {
         let context = state.context.borrow();
-        context.collect_menu_items(output_id)
+        if mode == canoe::WindowMenuMode::AltTab {
+            context.collect_alt_tab_menu_items(output_id)
+        } else {
+            context.collect_menu_items(output_id)
+        }
     };
     open_window_menu_with_items(
         state,
@@ -736,7 +740,7 @@ fn handle_window_menu_cycle_app(state: &mut AppState, qh: &QueueHandle<AppState>
         let Some(output_id) = output_id else {
             return;
         };
-        let items = context.collect_menu_items_for_app(output_id, &app_id);
+        let items = context.collect_alt_tab_menu_items_for_app(output_id, &app_id);
         if items.len() < 2 {
             return;
         }
@@ -1206,7 +1210,7 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                     for window in context.windows.values() {
                         let mut w = window.borrow_mut();
 
-                        if w.hidden {
+                        if !w.rendered_visible {
                             continue;
                         }
 
@@ -1352,8 +1356,8 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppState {
                     for (&window_id, window) in &context.windows {
                         let mut w = window.borrow_mut();
 
-                        let hide_titlebar =
-                            w.hidden || w.decoration == Some(crate::config::WindowDecoration::Csd);
+                        let hide_titlebar = !w.rendered_visible
+                            || w.decoration == Some(crate::config::WindowDecoration::Csd);
                         if hide_titlebar {
                             if let Some(ref mut titlebar) = w.titlebar {
                                 if titlebar.mapped {

@@ -71,6 +71,10 @@ pub enum Action {
 
     /// Send focused window to another output
     SendToOutput { direction: Direction },
+    /// Switch the current output to a workspace
+    SwitchWorkspace { workspace: u32 },
+    /// Move the focused window to a workspace
+    SendToWorkspace { workspace: u32 },
     /// Start pointer move operation
     PointerMove,
     /// Start pointer resize operation
@@ -139,7 +143,7 @@ pub fn default_xkb_bindings(
         crate::config::MainModifier::Super => (Keysym::Super_L.raw(), Keysym::Super_R.raw()),
     };
 
-    vec![
+    let mut bindings = vec![
         // Essential window management
         (
             Mode::Default,
@@ -373,7 +377,36 @@ pub fn default_xkb_bindings(
             Action::IconCancel,
             super::BindingEvent::Pressed,
         ),
-    ]
+    ];
+
+    for (workspace, keysym) in [
+        (1, Keysym::_1.raw()),
+        (2, Keysym::_2.raw()),
+        (3, Keysym::_3.raw()),
+        (4, Keysym::_4.raw()),
+        (5, Keysym::_5.raw()),
+        (6, Keysym::_6.raw()),
+        (7, Keysym::_7.raw()),
+        (8, Keysym::_8.raw()),
+        (9, Keysym::_9.raw()),
+    ] {
+        bindings.push((
+            Mode::Default,
+            keysym,
+            main,
+            Action::SwitchWorkspace { workspace },
+            super::BindingEvent::Pressed,
+        ));
+        bindings.push((
+            Mode::Default,
+            keysym,
+            main | shift,
+            Action::SendToWorkspace { workspace },
+            super::BindingEvent::Pressed,
+        ));
+    }
+
+    bindings
 }
 
 /// Default pointer bindings

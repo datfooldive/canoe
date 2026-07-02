@@ -57,6 +57,8 @@ cargo build --release
 | `Super+Alt+Right` | Send focused window to next output |
 | `Super+Alt+Up` | Send focused window to previous output |
 | `Super+Alt+Down` | Send focused window to next output |
+| `Super+1` ... `Super+9` | Switch current output to workspace 1-9 |
+| `Super+Shift+1` ... `Super+Shift+9` | Send focused window to workspace 1-9 |
 
 ## Mouse Actions
 
