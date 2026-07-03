@@ -11,6 +11,15 @@ pub enum Direction {
     Reverse,
 }
 
+/// Cardinal direction for moving a window
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MoveDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
 /// Snap target side for window actions
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapSide {
@@ -75,6 +84,8 @@ pub enum Action {
     SwitchWorkspace { workspace: u32 },
     /// Move the focused window to a workspace
     SendToWorkspace { workspace: u32 },
+    /// Move the focused window by one keyboard step
+    MoveFocused { direction: MoveDirection },
     /// Start pointer move operation
     PointerMove,
     /// Start pointer resize operation
@@ -181,6 +192,43 @@ pub fn default_xkb_bindings(
             main,
             Action::SmartSnapHalf {
                 side: SnapSide::Right,
+            },
+            super::BindingEvent::Pressed,
+        ),
+        // Keyboard window movement
+        (
+            Mode::Default,
+            Keysym::Left.raw(),
+            main | shift,
+            Action::MoveFocused {
+                direction: MoveDirection::Left,
+            },
+            super::BindingEvent::Pressed,
+        ),
+        (
+            Mode::Default,
+            Keysym::Right.raw(),
+            main | shift,
+            Action::MoveFocused {
+                direction: MoveDirection::Right,
+            },
+            super::BindingEvent::Pressed,
+        ),
+        (
+            Mode::Default,
+            Keysym::Up.raw(),
+            main | shift,
+            Action::MoveFocused {
+                direction: MoveDirection::Up,
+            },
+            super::BindingEvent::Pressed,
+        ),
+        (
+            Mode::Default,
+            Keysym::Down.raw(),
+            main | shift,
+            Action::MoveFocused {
+                direction: MoveDirection::Down,
             },
             super::BindingEvent::Pressed,
         ),

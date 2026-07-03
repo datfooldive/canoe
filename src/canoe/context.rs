@@ -1,6 +1,6 @@
 //! Core context - central state management
 
-use crate::binding::{Action, Direction, PointerBinding, XkbBinding};
+use crate::binding::{Action, Direction, MoveDirection, PointerBinding, XkbBinding};
 use crate::config::{load_config, Config, WindowDecoration};
 use crate::protocol::river_window_management_v1::client::river_window_v1::{Capabilities, Edges};
 use crate::protocol::*;
@@ -17,6 +17,8 @@ use std::rc::Rc;
 use super::{
     MenuItem, Output, OutputId, Seat, SeatId, Window, WindowId, WindowMenu, WindowMenuMode,
 };
+
+const KEYBOARD_MOVE_STEP: i32 = 50;
 
 /// The central window manager context
 pub struct Context {
@@ -586,6 +588,9 @@ impl Context {
             Action::SendToWorkspace { workspace } => {
                 self.send_to_workspace(workspace);
             }
+            Action::MoveFocused { direction } => {
+                self.move_focused_window(direction);
+            }
             Action::PointerMove => {
                 self.start_pointer_move(seat_id);
             }
@@ -1001,6 +1006,35 @@ impl Context {
         self.set_window_output(window_id, new_output_id);
     }
 
+    fn update_window_output_from_rect(
+        &mut self,
+        window_id: WindowId,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    ) {
+        if width <= 0 || height <= 0 {
+            return;
+        }
+
+        let current_output_id = self.windows.get(&window_id).and_then(|window| {
+            window
+                .borrow()
+                .output
+                .as_ref()
+                .and_then(|output| output.upgrade())
+                .map(|output| output.borrow().id)
+        });
+        let Some(new_output_id) = self.output_for_rect(x, y, width, height) else {
+            return;
+        };
+
+        if current_output_id != Some(new_output_id) {
+            self.set_window_output(window_id, new_output_id);
+        }
+    }
+
     pub(crate) fn update_window_output_from_pointer(
         &mut self,
         seat_id: SeatId,
@@ -1053,10 +1087,14 @@ impl Context {
     }
 
     fn output_for_window_rect(&self, window: &Window) -> Option<OutputId> {
-        let wx1 = window.x;
-        let wy1 = window.y;
-        let wx2 = window.x + window.width;
-        let wy2 = window.y + window.height;
+        self.output_for_rect(window.x, window.y, window.width, window.height)
+    }
+
+    fn output_for_rect(&self, x: i32, y: i32, width: i32, height: i32) -> Option<OutputId> {
+        let wx1 = x;
+        let wy1 = y;
+        let wx2 = x + width;
+        let wy2 = y + height;
 
         let mut best: Option<(OutputId, i64)> = None;
         for (id, output) in &self.outputs {
@@ -1081,8 +1119,8 @@ impl Context {
             return best_id;
         }
 
-        let center_x = window.x + (window.width / 2);
-        let center_y = window.y + (window.height / 2);
+        let center_x = x + (width / 2);
+        let center_y = y + (height / 2);
         self.output_at_point(center_x, center_y)
     }
 
@@ -1189,6 +1227,63 @@ impl Context {
 
         if let Some(ref rwm) = self.rwm {
             rwm.manage_dirty();
+        }
+    }
+
+    fn move_focused_window(&mut self, direction: MoveDirection) {
+        let Some(window_id) = self.focused_window else {
+            return;
+        };
+
+        let (dx, dy) = match direction {
+            MoveDirection::Left => (-KEYBOARD_MOVE_STEP, 0),
+            MoveDirection::Right => (KEYBOARD_MOVE_STEP, 0),
+            MoveDirection::Up => (0, -KEYBOARD_MOVE_STEP),
+            MoveDirection::Down => (0, KEYBOARD_MOVE_STEP),
+        };
+
+        let Some(window) = self.windows.get(&window_id) else {
+            return;
+        };
+
+        let restored_rect = {
+            let mut w = window.borrow_mut();
+            if !matches!(w.fullscreen, super::window::FullscreenState::None) {
+                return;
+            }
+
+            let was_maximized = w.maximized;
+            let mut restored_rect = None;
+            if w.maximized || w.snap_state.is_some() {
+                w.maximized = false;
+                w.snap_state = None;
+                if let Some(saved) = w.pre_snap.take() {
+                    let x = saved.x + dx;
+                    let y = saved.y + dy;
+                    w.set_position(x, y);
+                    w.propose_dimensions(saved.width, saved.height);
+                    restored_rect = Some((x, y, saved.width, saved.height));
+                } else {
+                    let x = w.x;
+                    let y = w.y;
+                    w.set_position(x + dx, y + dy);
+                }
+                if was_maximized {
+                    w.inform_unmaximized();
+                }
+            } else {
+                let x = w.x;
+                let y = w.y;
+                w.set_position(x + dx, y + dy);
+            }
+            w.floating = true;
+            restored_rect
+        };
+
+        if let Some((x, y, width, height)) = restored_rect {
+            self.update_window_output_from_rect(window_id, x, y, width, height);
+        } else {
+            self.update_window_output_from_position(window_id);
         }
     }
 

@@ -53,6 +53,7 @@ cargo build --release
 | `Super+m` | Minimize focused window |
 | `Super+Left` | Snap focused window to left half; restore if snapped right |
 | `Super+Right` | Snap focused window to right half; restore if snapped left |
+| `Super+Shift+Arrow` | Move focused window |
 | `Super+Alt+Left` | Send focused window to previous output |
 | `Super+Alt+Right` | Send focused window to next output |
 | `Super+Alt+Up` | Send focused window to previous output |
