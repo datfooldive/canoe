@@ -1437,6 +1437,9 @@ impl Context {
             if let Some(window) = self.windows.get(&window_id) {
                 if let Some(seat) = self.seats.get(&seat_id) {
                     let mut w = window.borrow_mut();
+                    if w.maximized {
+                        return;
+                    }
                     let (px, py) = {
                         let seat_ref = seat.borrow();
                         (seat_ref.pointer_x, seat_ref.pointer_y)
@@ -1588,6 +1591,9 @@ impl Context {
                 }
 
                 let mut w = window.borrow_mut();
+                if w.maximized {
+                    return;
+                }
                 self.unmaximize_for_move(&mut w, px, py, false);
                 w.floating = true;
                 w.start_move(Rc::downgrade(&seat));
@@ -1598,6 +1604,9 @@ impl Context {
 
         if has_titlebar && point_in_titlebar(x, y + swallow_top, width, titlebar_height, px, py) {
             let mut w = window.borrow_mut();
+            if w.maximized {
+                return;
+            }
             self.unmaximize_for_move(&mut w, px, py, false);
             w.floating = true;
             w.start_move(Rc::downgrade(&seat));
